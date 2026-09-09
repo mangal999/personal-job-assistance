@@ -1,0 +1,10 @@
+{
+  "framework": "nextjs",
+  "regions": ["iad1"],
+  "crons": [
+    {
+      "path": "/api/jobs?q=developer",
+      "schedule": "0 */6 * * *"
+    }
+  ]
+}
