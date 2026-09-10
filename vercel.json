@@ -3,7 +3,7 @@
   "regions": ["iad1"],
   "crons": [
     {
-      "path": "/api/jobs?q=developer",
+      "path": "/api/jobs?q=developer&location=India",
       "schedule": "0 1 * * *"
     }
   ]

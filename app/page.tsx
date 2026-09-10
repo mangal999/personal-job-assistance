@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { UnifiedJob } from "@/lib/types";
 import JobCard from "@/components/JobCard";
 import FilterBar from "@/components/FilterBar";
@@ -34,16 +34,30 @@ function rankByResume(jobs: UnifiedJob[], resume: string): UnifiedJob[] {
 
 export default function Home() {
   const [q, setQ] = useState("developer");
-  const [location, setLocation] = useState("");
+  const [location, setLocation] = useState("India");
   const [remoteOnly, setRemoteOnly] = useState(false);
   const [jobs, setJobs] = useState<UnifiedJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resumeText, setResumeText] = useState("");
   const [sources, setSources] = useState<Record<string, string> | null>(null);
+  const [availableSources, setAvailableSources] = useState<string[]>([
+    "Arbeitnow",
+    "Remotive",
+    "Adzuna",
+    "RemoteOK",
+    "JSearch",
+  ]);
+  const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [savedHashes, setSavedHashes] = useState<Set<string>>(new Set());
   const [personalized, setPersonalized] = useState(false);
+  // Ref mirror so fetchJobs (memoized) always sees latest source selection,
+  // including the initial ?sources= URL value loaded in the mount effect.
+  const selectedSourcesRef = useRef<string[]>([]);
+  useEffect(() => {
+    selectedSourcesRef.current = selectedSources;
+  }, [selectedSources]);
 
   // Load from localStorage
   useEffect(() => {
@@ -61,26 +75,35 @@ export default function Home() {
     if (params.get("q")) setQ(params.get("q")!);
     if (params.get("location")) setLocation(params.get("location")!);
     if (params.get("remote") === "true") setRemoteOnly(true);
+    const srcParam = params.get("sources") || params.get("source");
+    if (srcParam) {
+      const parsed = srcParam.split(",").map((s) => s.trim()).filter(Boolean);
+      setSelectedSources(parsed);
+      selectedSourcesRef.current = parsed;
+    }
   }, []);
 
   useEffect(() => {
     localStorage.setItem(LS_RESUME, resumeText);
   }, [resumeText]);
 
-  const fetchJobs = useCallback(async (personalize = false) => {
+  const fetchJobs = useCallback(async (personalize = false, overrideSources?: string[]) => {
     setLoading(true);
     setError(null);
     try {
+      const activeSources = overrideSources ?? selectedSourcesRef.current;
       const url = new URL("/api/jobs", window.location.origin);
       if (q) url.searchParams.set("q", q);
       if (location) url.searchParams.set("location", location);
       if (remoteOnly) url.searchParams.set("remote", "true");
+      if (activeSources.length > 0) url.searchParams.set("sources", activeSources.join(","));
 
       // update browser URL
       const newParams = new URLSearchParams();
       if (q) newParams.set("q", q);
       if (location) newParams.set("location", location);
       if (remoteOnly) newParams.set("remote", "true");
+      if (activeSources.length > 0) newParams.set("sources", activeSources.join(","));
       window.history.replaceState(null, "", `?${newParams.toString()}`);
 
       const res = await fetch(url.toString());
@@ -95,6 +118,9 @@ export default function Home() {
       }
       setJobs(fetched);
       setSources(data.sources);
+      if (Array.isArray(data.availableSources) && data.availableSources.length > 0) {
+        setAvailableSources(data.availableSources);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -107,6 +133,30 @@ export default function Home() {
     fetchJobs();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function toggleSource(source: string) {
+    setSelectedSources((prev) => {
+      // No selection = all sources. Toggling from "all" starts a new
+      // single-source selection; toggling the last one off returns to all.
+      let next: string[];
+      if (prev.length === 0) {
+        next = [source];
+      } else if (prev.includes(source)) {
+        next = prev.filter((s) => s !== source);
+      } else {
+        next = [...prev, source];
+      }
+      selectedSourcesRef.current = next;
+      fetchJobs(false, next);
+      return next;
+    });
+  }
+
+  function clearSources() {
+    setSelectedSources([]);
+    selectedSourcesRef.current = [];
+    fetchJobs(false, []);
+  }
 
   function toggleSave(job: UnifiedJob) {
     const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
@@ -125,9 +175,10 @@ export default function Home() {
     setSavedHashes(new Set(arr.map((j) => `${j.title.toLowerCase()}|${j.company.toLowerCase()}`)));
   }
 
-  const displayed = showSavedOnly
+  const displayed = (showSavedOnly
     ? jobs.filter((j) => savedHashes.has(`${j.title.toLowerCase()}|${j.company.toLowerCase()}`))
-    : jobs;
+    : jobs
+  ).filter((j) => selectedSources.length === 0 || selectedSources.includes(j.source));
 
   const savedCount = savedHashes.size;
 
@@ -156,6 +207,10 @@ export default function Home() {
         onSearch={() => fetchJobs(false)}
         onPersonalized={() => fetchJobs(true)}
         hasResume={resumeText.length > 50}
+        availableSources={availableSources}
+        selectedSources={selectedSources}
+        onToggleSource={toggleSource}
+        onClearSources={clearSources}
       />
 
       <main className="mx-auto max-w-6xl px-4 py-6">
@@ -173,7 +228,7 @@ export default function Home() {
             <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
               <h3 className="text-sm font-semibold">How it works</h3>
               <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-zinc-600 dark:text-zinc-400">
-                <li>Search jobs — we aggregate Arbeitnow + Remotive + Adzuna (free).</li>
+                <li>Search jobs — we aggregate Adzuna India + JSearch + RemoteOK + Remotive + Arbeitnow.</li>
                 <li>Click <span className="rounded bg-black px-1 py-0.5 text-white">Apply ↗</span> → go to official portal.</li>
                 <li>Click <span className="rounded bg-zinc-800 px-1 py-0.5 text-white">ATS Score</span> next to any job → real Gemini score (or mock if no key).</li>
                 <li>Use <em>For You</em> to re-rank by resume keywords (no LLM cost).</li>
