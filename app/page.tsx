@@ -1,13 +1,32 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
+import type { User } from "@supabase/supabase-js";
 import { UnifiedJob } from "@/lib/types";
 import JobCard from "@/components/JobCard";
 import FilterBar from "@/components/FilterBar";
 import ResumeUploader from "@/components/ResumeUploader";
+import AuthButton, { PJA_AUTH_EVENT } from "@/components/AuthButton";
+import CustomSources, { encodeCustomParam } from "@/components/CustomSources";
+import type { CustomSource } from "@/lib/custom-source-types";
+import { getSupabaseBrowser, isSupabaseConfigured } from "@/lib/supabase";
 
 const LS_RESUME = "pja_resume_text";
 const LS_SAVED = "pja_saved_jobs";
+const LS_CUSTOM = "pja_custom_sources";
+
+function parseLocalCustomSources(): CustomSource[] {
+  try {
+    const raw = localStorage.getItem(LS_CUSTOM);
+    if (!raw) return [];
+    const arr = JSON.parse(raw) as CustomSource[];
+    return Array.isArray(arr)
+      ? arr.filter((s) => s && typeof s.name === "string" && typeof s.url === "string").slice(0, 10)
+      : [];
+  } catch {
+    return [];
+  }
+}
 
 function rankByResume(jobs: UnifiedJob[], resume: string): UnifiedJob[] {
   if (!resume || resume.length < 50) return jobs;
@@ -33,14 +52,18 @@ function rankByResume(jobs: UnifiedJob[], resume: string): UnifiedJob[] {
 }
 
 export default function Home() {
-  const [q, setQ] = useState("developer");
-  const [location, setLocation] = useState("India");
+  // Empty defaults = unfiltered "all jobs". Previous defaults
+  // (q="developer", location="India") biased every first load toward
+  // developer jobs and made search feel "stuck on developer".
+  const [q, setQ] = useState("");
+  const [location, setLocation] = useState("");
   const [remoteOnly, setRemoteOnly] = useState(false);
   const [jobs, setJobs] = useState<UnifiedJob[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resumeText, setResumeText] = useState("");
   const [sources, setSources] = useState<Record<string, string> | null>(null);
+  const [servedFromCache, setServedFromCache] = useState(false);
   const [availableSources, setAvailableSources] = useState<string[]>([
     "Arbeitnow",
     "Remotive",
@@ -52,14 +75,161 @@ export default function Home() {
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [savedHashes, setSavedHashes] = useState<Set<string>>(new Set());
   const [personalized, setPersonalized] = useState(false);
-  // Ref mirror so fetchJobs (memoized) always sees latest source selection,
-  // including the initial ?sources= URL value loaded in the mount effect.
+  const [user, setUser] = useState<User | null>(null);
+  const [customSources, setCustomSources] = useState<CustomSource[]>([]);
+  const userRef = useRef<User | null>(null);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user ]);
+  const customSourcesRef = useRef<CustomSource[]>([]);
+  useEffect(() => {
+    customSourcesRef.current = customSources;
+  }, [customSources]);
+
+  // Ensure a profiles row exists (custom_sources/saved_jobs FK references it).
+  async function ensureProfile(u: User) {
+    const supabase = getSupabaseBrowser()!;
+    await supabase.from("profiles").upsert({ id: u.id, email: u.email }, { onConflict: "id" });
+  }
+
+  // Track login state (emitted by AuthButton). On login, pull cloud data.
+  useEffect(() => {
+    const handler = async (e: Event) => {
+      const u = (e as CustomEvent<User | null>).detail ?? null;
+      setUser(u);
+      if (u && isSupabaseConfigured()) {
+        const supabase = getSupabaseBrowser()!;
+        // Load cloud-saved jobs
+        const { data: saved } = await supabase.from("saved_jobs").select("job_data");
+        if (saved && saved.length > 0) {
+          try {
+            const arr = saved.map((r) => (r as { job_data: UnifiedJob }).job_data);
+            localStorage.setItem(LS_SAVED, JSON.stringify(arr));
+            setSavedHashes(
+              new Set(arr.map((j) => `${j.title.toLowerCase()}|${j.company.toLowerCase()}`))
+            );
+          } catch {}
+        }
+        // Load cloud resume if local empty
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("resume_text")
+          .eq("id", u.id)
+          .single();
+        const cloudResume = (profile as { resume_text?: string } | null)?.resume_text;
+        if (cloudResume && cloudResume.length > 50) {
+          const local = localStorage.getItem(LS_RESUME) || "";
+          if (local.length < 50) {
+            setResumeText(cloudResume);
+          }
+        }
+        // Load cloud custom sources (cloud wins when non-empty)
+        const { data: cloudSources } = await supabase
+          .from("custom_sources")
+          .select("name,type,url,enabled");
+        if (cloudSources && cloudSources.length > 0) {
+          const arr: CustomSource[] = (cloudSources as Array<{ name: string; type: CustomSource["type"]; url: string; enabled: boolean }>)
+            .filter((r) => r.name && r.url)
+            .slice(0, 10)
+            .map((r, i) => ({ id: `cloud-${i}`, name: r.name, type: r.type, url: r.url, enabled: r.enabled !== false }));
+          localStorage.setItem(LS_CUSTOM, JSON.stringify(arr));
+          customSourcesRef.current = arr;
+          setCustomSources(arr);
+          void fetchJobs({ customs: arr });
+        }
+      }
+    };
+    window.addEventListener(PJA_AUTH_EVENT, handler);
+    return () => window.removeEventListener(PJA_AUTH_EVENT, handler);
+    // fetchJobs intentionally excluded: auth subscription must attach once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Sync resume to Supabase profile (debounced) when logged in.
+  useEffect(() => {
+    if (!user || !isSupabaseConfigured() || resumeText.length < 50) return;
+    const t = setTimeout(() => {
+      const supabase = getSupabaseBrowser()!;
+      void supabase.from("profiles").upsert(
+        { id: user.id, email: user.email, resume_text: resumeText, resume_updated_at: new Date().toISOString() },
+        { onConflict: "id" }
+      );
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [resumeText, user]);
+  // Ref mirror so source toggles always see latest selection.
   const selectedSourcesRef = useRef<string[]>([]);
   useEffect(() => {
     selectedSourcesRef.current = selectedSources;
   }, [selectedSources]);
 
-  // Load from localStorage
+  // Explicit-params fetch: never relies on stale closures.
+  // Every search sends exactly what the user typed — no hidden defaults.
+  // Custom sources ride along via ?custom= so searches include them and the
+  // server cache key stays per-query (never cross-contaminated).
+  async function fetchJobs(
+    args?: {
+      q?: string;
+      location?: string;
+      remoteOnly?: boolean;
+      sources?: string[];
+      customs?: CustomSource[];
+    },
+    personalize = false
+  ) {
+    const qq = (args?.q ?? q).trim();
+    const loc = (args?.location ?? location).trim();
+    const rem = args?.remoteOnly ?? remoteOnly;
+    const srcs = args?.sources ?? selectedSourcesRef.current;
+    const customs = args?.customs ?? customSourcesRef.current;
+    setLoading(true);
+    setError(null);
+    try {
+      const url = new URL("/api/jobs", window.location.origin);
+      if (qq) url.searchParams.set("q", qq);
+      if (loc) url.searchParams.set("location", loc);
+      if (rem) url.searchParams.set("remote", "true");
+      if (srcs.length > 0) url.searchParams.set("sources", srcs.join(","));
+      const customParam = encodeCustomParam(customs);
+      if (customParam) url.searchParams.set("custom", customParam);
+
+      // update browser URL (shareable filter URL)
+      const newParams = new URLSearchParams();
+      if (qq) newParams.set("q", qq);
+      if (loc) newParams.set("location", loc);
+      if (rem) newParams.set("remote", "true");
+      if (srcs.length > 0) newParams.set("sources", srcs.join(","));
+      const qs = newParams.toString();
+      window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
+
+      // Bypass HTTP cache on explicit user searches so results always
+      // reflect the current query, not a cached older one.
+      const res = await fetch(url.toString(), { cache: "no-store" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to fetch jobs");
+      let fetched: UnifiedJob[] = data.jobs;
+      if (personalize && resumeText) {
+        fetched = rankByResume(fetched, resumeText);
+        setPersonalized(true);
+      } else {
+        setPersonalized(false);
+      }
+      setJobs(fetched);
+      setSources(data.sources);
+      setServedFromCache(!!data.cached);
+      if (Array.isArray(data.availableSources) && data.availableSources.length > 0) {
+        setAvailableSources(data.availableSources);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Load from localStorage + URL, then fetch ONCE with those exact values.
+  // (Previously two separate mount effects raced: the fetch used the stale
+  // default q="developer" even when the URL said ?q=designer.)
   useEffect(() => {
     const r = localStorage.getItem(LS_RESUME);
     if (r) setResumeText(r);
@@ -72,67 +242,26 @@ export default function Home() {
     }
     // Load query from URL
     const params = new URLSearchParams(window.location.search);
-    if (params.get("q")) setQ(params.get("q")!);
-    if (params.get("location")) setLocation(params.get("location")!);
-    if (params.get("remote") === "true") setRemoteOnly(true);
+    const urlQ = params.get("q") || "";
+    const urlLoc = params.get("location") || "";
+    const urlRemote = params.get("remote") === "true";
     const srcParam = params.get("sources") || params.get("source");
-    if (srcParam) {
-      const parsed = srcParam.split(",").map((s) => s.trim()).filter(Boolean);
-      setSelectedSources(parsed);
-      selectedSourcesRef.current = parsed;
-    }
+    const urlSources = srcParam ? srcParam.split(",").map((x) => x.trim()).filter(Boolean) : [];
+    const localCustoms = parseLocalCustomSources();
+    setQ(urlQ);
+    setLocation(urlLoc);
+    setRemoteOnly(urlRemote);
+    setSelectedSources(urlSources);
+    selectedSourcesRef.current = urlSources;
+    setCustomSources(localCustoms);
+    customSourcesRef.current = localCustoms;
+    void fetchJobs({ q: urlQ, location: urlLoc, remoteOnly: urlRemote, sources: urlSources, customs: localCustoms });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     localStorage.setItem(LS_RESUME, resumeText);
   }, [resumeText]);
-
-  const fetchJobs = useCallback(async (personalize = false, overrideSources?: string[]) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const activeSources = overrideSources ?? selectedSourcesRef.current;
-      const url = new URL("/api/jobs", window.location.origin);
-      if (q) url.searchParams.set("q", q);
-      if (location) url.searchParams.set("location", location);
-      if (remoteOnly) url.searchParams.set("remote", "true");
-      if (activeSources.length > 0) url.searchParams.set("sources", activeSources.join(","));
-
-      // update browser URL
-      const newParams = new URLSearchParams();
-      if (q) newParams.set("q", q);
-      if (location) newParams.set("location", location);
-      if (remoteOnly) newParams.set("remote", "true");
-      if (activeSources.length > 0) newParams.set("sources", activeSources.join(","));
-      window.history.replaceState(null, "", `?${newParams.toString()}`);
-
-      const res = await fetch(url.toString());
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to fetch jobs");
-      let fetched: UnifiedJob[] = data.jobs;
-      if (personalize && resumeText) {
-        fetched = rankByResume(fetched, resumeText);
-        setPersonalized(true);
-      } else {
-        setPersonalized(false);
-      }
-      setJobs(fetched);
-      setSources(data.sources);
-      if (Array.isArray(data.availableSources) && data.availableSources.length > 0) {
-        setAvailableSources(data.availableSources);
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [q, location, remoteOnly, resumeText]);
-
-  // Initial fetch
-  useEffect(() => {
-    fetchJobs();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   function toggleSource(source: string) {
     setSelectedSources((prev) => {
@@ -147,7 +276,7 @@ export default function Home() {
         next = [...prev, source];
       }
       selectedSourcesRef.current = next;
-      fetchJobs(false, next);
+      void fetchJobs({ q, location, remoteOnly, sources: next });
       return next;
     });
   }
@@ -155,11 +284,34 @@ export default function Home() {
   function clearSources() {
     setSelectedSources([]);
     selectedSourcesRef.current = [];
-    fetchJobs(false, []);
+    void fetchJobs({ q, location, remoteOnly, sources: [] });
+  }
+
+  // Custom sources: persist locally always, sync to Supabase when logged in,
+  // and re-run the search so the new/removed source takes effect immediately.
+  function handleCustomSourcesChange(next: CustomSource[]) {
+    setCustomSources(next);
+    customSourcesRef.current = next;
+    localStorage.setItem(LS_CUSTOM, JSON.stringify(next));
+    const u = userRef.current;
+    if (u && isSupabaseConfigured()) {
+      const supabase = getSupabaseBrowser()!;
+      void (async () => {
+        await ensureProfile(u);
+        await supabase.from("custom_sources").delete().eq("user_id", u.id);
+        if (next.length > 0) {
+          await supabase.from("custom_sources").insert(
+            next.map((s) => ({ user_id: u.id, name: s.name, type: s.type, url: s.url, enabled: s.enabled !== false }))
+          );
+        }
+      })();
+    }
+    void fetchJobs({ q, location, remoteOnly, customs: next });
   }
 
   function toggleSave(job: UnifiedJob) {
     const key = `${job.title.toLowerCase()}|${job.company.toLowerCase()}`;
+    const jobHash = key.replace(/[^a-z0-9]+/g, "-").slice(0, 120);
     const raw = localStorage.getItem(LS_SAVED);
     let arr: UnifiedJob[] = [];
     try {
@@ -173,6 +325,18 @@ export default function Home() {
     }
     localStorage.setItem(LS_SAVED, JSON.stringify(arr));
     setSavedHashes(new Set(arr.map((j) => `${j.title.toLowerCase()}|${j.company.toLowerCase()}`)));
+    // Cloud sync when logged in (Supabase) — localStorage stays the fallback.
+    const u = userRef.current;
+    if (u && isSupabaseConfigured()) {
+      const supabase = getSupabaseBrowser()!;
+      if (exists) {
+        void supabase.from("saved_jobs").delete().eq("user_id", u.id).eq("job_hash", jobHash);
+      } else {
+        void supabase
+          .from("saved_jobs")
+          .upsert({ user_id: u.id, job_hash: jobHash, job_data: job }, { onConflict: "user_id,job_hash" });
+      }
+    }
   }
 
   const displayed = (showSavedOnly
@@ -192,7 +356,12 @@ export default function Home() {
           </div>
           <div className="hidden sm:block text-right">
             <p className="text-xs text-zinc-500">{resumeText ? `Resume: ${resumeText.length} chars` : "No resume — upload to enable ATS"}</p>
-            <p className="text-xs text-zinc-400">Deploy free on Vercel/Netlify • 100% free APIs</p>
+            <p className="text-xs text-zinc-400">
+              {user ? `☁️ Synced as ${user.email}` : "Deploy free on Vercel/Netlify • 100% free APIs"}
+            </p>
+          </div>
+          <div className="sm:ml-4">
+            <AuthButton />
           </div>
         </div>
       </header>
@@ -204,8 +373,8 @@ export default function Home() {
         setLocation={setLocation}
         remoteOnly={remoteOnly}
         setRemoteOnly={setRemoteOnly}
-        onSearch={() => fetchJobs(false)}
-        onPersonalized={() => fetchJobs(true)}
+        onSearch={() => fetchJobs()}
+        onPersonalized={() => fetchJobs(undefined, true)}
         hasResume={resumeText.length > 50}
         availableSources={availableSources}
         selectedSources={selectedSources}
@@ -226,9 +395,19 @@ export default function Home() {
             </div>
 
             <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+              <h2 className="font-semibold">2. My job sources</h2>
+              <p className="mt-1 text-xs text-zinc-500">
+                Add RSS feeds or Greenhouse/Lever boards. Searches include them automatically.
+              </p>
+              <div className="mt-3">
+                <CustomSources sources={customSources} onChange={handleCustomSourcesChange} isCloud={!!user} />
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
               <h3 className="text-sm font-semibold">How it works</h3>
               <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-zinc-600 dark:text-zinc-400">
-                <li>Search jobs — we aggregate Adzuna India + JSearch + RemoteOK + Remotive + Arbeitnow.</li>
+                <li>Search jobs — built-in boards + your custom sources (§2).</li>
                 <li>Click <span className="rounded bg-black px-1 py-0.5 text-white">Apply ↗</span> → go to official portal.</li>
                 <li>Click <span className="rounded bg-zinc-800 px-1 py-0.5 text-white">ATS Score</span> next to any job → real Gemini score (or mock if no key).</li>
                 <li>Use <em>For You</em> to re-rank by resume keywords (no LLM cost).</li>
@@ -265,7 +444,11 @@ export default function Home() {
                   {showSavedOnly ? `Saved (${savedCount})` : personalized ? "For You — ranked by resume" : `Jobs (${displayed.length})`}
                 </h2>
                 <p className="text-xs text-zinc-500">
-                  {loading ? "Loading..." : error ? error : `Showing ${displayed.length} jobs from multiple boards • Cached 10 min`}
+                  {loading
+                    ? `Searching${q.trim() ? ` for "${q.trim()}"` : ""}...`
+                    : error
+                      ? error
+                      : `Showing ${displayed.length} jobs${q.trim() ? ` for "${q.trim()}"` : ""}${servedFromCache ? " • served from 3-min cache" : " • live"}`}
                 </p>
               </div>
               <div className="flex gap-2">
@@ -299,7 +482,9 @@ export default function Home() {
             )}
 
             {!loading && !error && displayed.length === 0 && (
-              <div className="rounded-xl border border-dashed p-8 text-center text-sm text-zinc-500">No jobs found. Try &quot;developer&quot; or uncheck Remote only.</div>
+              <div className="rounded-xl border border-dashed p-8 text-center text-sm text-zinc-500">
+                No jobs found{q.trim() ? ` for "${q.trim()}"` : ""}. Try a different keyword (e.g. &quot;designer&quot;, &quot;accountant&quot;, &quot;nurse&quot;) or uncheck Remote only.
+              </div>
             )}
 
             <div className="grid gap-3">

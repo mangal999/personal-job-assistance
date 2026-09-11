@@ -23,6 +23,23 @@ You asked — we use **latest stable**, not an older version. Reasons:
 - **Filters:** `q`, `location`, `remote only` — shareable URL `?q=react&location=remote`.
 - **Resume upload:** PDF (pdfjs-dist via CDN worker), DOCX (mammoth), TXT — stored locally or Supabase if configured.
 - **Saved jobs:** ♥ in localStorage (or Supabase `saved_jobs` when configured).
+- **My job sources (§2 panel):** add custom RSS feeds or Greenhouse/Lever company boards from the UI.
+  Each row has a **Test** button (fetches only that source), an enable toggle, and delete.
+  Saved per browser, or per account in Supabase `custom_sources` when logged in (re-run
+  `supabase/schema.sql` to add the table). Click a custom source's chip above the feed to
+  fetch **from that source only**.
+- **Login (Supabase, optional):** Google OAuth + email code via header Login button / `/login`. See `SUPABASE_SETUP.md` (free via Vercel Marketplace).
+
+## Supabase (free, optional — 5 min)
+
+Easiest: Vercel project → **Storage → Marketplace → Supabase (Free)** → it injects `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` automatically. Then:
+
+1. Supabase SQL Editor → paste & run `supabase/schema.sql` (creates `profiles`, `saved_jobs`, `ats_cache`, `applied_jobs`).
+2. Auth → Providers → enable **Google** (+ Email OTP is default).
+3. Auth → URL Configuration → add `https://YOUR-APP.vercel.app/login` (+ `http://localhost:3000/login` for dev).
+4. Vercel → Redeploy. Header Login now works; saves + resume sync to cloud when logged in.
+
+Full steps: [`SUPABASE_SETUP.md`](./SUPABASE_SETUP.md). Without keys the app still works (localStorage).
 
 ## Deploy Free (Vercel Recommended)
 

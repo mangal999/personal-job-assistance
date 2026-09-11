@@ -18,6 +18,27 @@ function isRemoteLocation(loc: string, tags: string[] = []): boolean {
   return false;
 }
 
+// -- Shared query matching --
+// Token-based AND matching: every word in the query must appear somewhere
+// in title/description/company/tags. This makes search actually filter
+// ("product manager" matches only jobs containing BOTH words), instead of
+// returning unfiltered provider results that look like "always developer".
+export function matchesQuery(
+  job: Pick<UnifiedJob, "title" | "description" | "company" | "tags">,
+  query?: string
+): boolean {
+  if (!query) return true;
+  const tokens = query
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length > 1);
+  if (tokens.length === 0) return true;
+  const haystack =
+    `${job.title} ${job.description} ${job.company} ${job.tags?.join(" ") ?? ""}`.toLowerCase();
+  return tokens.every((t) => haystack.includes(t));
+}
+
 export const AVAILABLE_SOURCES = ["Arbeitnow", "Remotive", "Adzuna", "RemoteOK", "JSearch"] as const;
 export type SourceName = (typeof AVAILABLE_SOURCES)[number];
 
@@ -94,7 +115,7 @@ interface ArbeitnowResponse {
 
 export async function fetchArbeitnow(query?: string): Promise<UnifiedJob[]> {
   const res = await fetch("https://www.arbeitnow.com/api/job-board-api", {
-    next: { revalidate: 1800 },
+    next: { revalidate: 300 },
   });
   if (!res.ok) throw new Error(`Arbeitnow ${res.status}`);
   const json: ArbeitnowResponse = await res.json();
@@ -113,19 +134,16 @@ export async function fetchArbeitnow(query?: string): Promise<UnifiedJob[]> {
   }));
 
   if (query) {
-    const q = query.toLowerCase();
-    jobs = jobs.filter(
-      (j) =>
-        j.title.toLowerCase().includes(q) ||
-        j.description.toLowerCase().includes(q) ||
-        j.company.toLowerCase().includes(q) ||
-        j.tags?.some((t) => t.toLowerCase().includes(q))
-    );
+    jobs = jobs.filter((j) => matchesQuery(j, query));
   }
   return jobs;
 }
 
 // -- Remotive (https://remotive.com/api/remote-jobs) --
+// NOTE: Remotive's `?search=` param is currently ignored server-side (API
+// returns the same ~18 jobs for any query — verified Sep 2026). So we fetch
+// the list and ALWAYS filter client-side with matchesQuery, otherwise every
+// search looks like "always developer / always cached".
 interface RemotiveResponse {
   jobs: Array<{
     id: number;
@@ -145,10 +163,10 @@ interface RemotiveResponse {
 export async function fetchRemotive(query?: string): Promise<UnifiedJob[]> {
   const url = new URL("https://remotive.com/api/remote-jobs");
   if (query) url.searchParams.set("search", query);
-  const res = await fetch(url.toString(), { next: { revalidate: 1800 } });
+  const res = await fetch(url.toString(), { next: { revalidate: 300 } });
   if (!res.ok) throw new Error(`Remotive ${res.status}`);
   const json: RemotiveResponse = await res.json();
-  return json.jobs.slice(0, 50).map((j) => ({
+  let jobs: UnifiedJob[] = json.jobs.slice(0, 100).map((j) => ({
     id: `remotive-${j.id}`,
     title: j.title,
     company: j.company_name,
@@ -162,6 +180,9 @@ export async function fetchRemotive(query?: string): Promise<UnifiedJob[]> {
     type: j.job_type,
     tags: j.tags,
   }));
+  // Client-side filter is REQUIRED (server ignores ?search=).
+  if (query) jobs = jobs.filter((j) => matchesQuery(j, query));
+  return jobs.slice(0, 50);
 }
 
 // -- Adzuna (optional, requires keys) --
@@ -181,7 +202,7 @@ export async function fetchAdzuna(query?: string, location?: string): Promise<Un
   if (query) url.searchParams.set("what", query);
   if (location) url.searchParams.set("where", location);
 
-  const res = await fetch(url.toString(), { next: { revalidate: 1800 } });
+  const res = await fetch(url.toString(), { next: { revalidate: 300 } });
   if (!res.ok) {
     // Adzuna returns 429 when quota exceeded - degrade gracefully
     console.warn("Adzuna fetch failed", res.status);
@@ -211,7 +232,7 @@ export async function fetchAdzuna(query?: string, location?: string): Promise<Un
 export async function fetchRemoteOK(query?: string): Promise<UnifiedJob[]> {
   try {
     const res = await fetch("https://remoteok.com/api", {
-      next: { revalidate: 1800 },
+      next: { revalidate: 300 },
       headers: {
         // RemoteOK rejects requests without a UA
         "User-Agent": "PersonalJobAssistance/1.0 (job aggregator)",
@@ -242,14 +263,7 @@ export async function fetchRemoteOK(query?: string): Promise<UnifiedJob[]> {
     });
 
     if (query) {
-      const q = query.toLowerCase();
-      jobs = jobs.filter(
-        (j) =>
-          j.title.toLowerCase().includes(q) ||
-          j.description.toLowerCase().includes(q) ||
-          j.company.toLowerCase().includes(q) ||
-          j.tags?.some((t) => t.toLowerCase().includes(q))
-      );
+      jobs = jobs.filter((j) => matchesQuery(j, query));
     }
     return jobs.slice(0, 50);
   } catch (e) {
@@ -260,12 +274,15 @@ export async function fetchRemoteOK(query?: string): Promise<UnifiedJob[]> {
 
 // -- JSearch via RapidAPI (optional, requires RAPIDAPI_KEY) --
 // Supports country=in for India listings (LinkedIn/Indeed/Glassdoor aggregate).
+// NOTE: no "developer" fallback — an empty query returns [] instead of
+// biasing every empty search toward developer jobs.
 export async function fetchJSearch(query?: string, location?: string): Promise<UnifiedJob[]> {
   const key = process.env.RAPIDAPI_KEY;
   if (!key) return [];
+  const what = [query?.trim(), location?.trim()].filter(Boolean).join(" in ");
+  if (!what) return [];
   try {
     const url = new URL("https://jsearch.p.rapidapi.com/search");
-    const what = [query, location].filter(Boolean).join(" in ") || "developer in India";
     url.searchParams.set("query", what);
     url.searchParams.set("page", "1");
     url.searchParams.set("num_pages", "1");
@@ -273,7 +290,7 @@ export async function fetchJSearch(query?: string, location?: string): Promise<U
     url.searchParams.set("date_posted", "all");
 
     const res = await fetch(url.toString(), {
-      next: { revalidate: 1800 },
+      next: { revalidate: 300 },
       headers: {
         "X-RapidAPI-Key": key,
         "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
