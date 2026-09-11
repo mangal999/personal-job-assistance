@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import type { ReactNode } from "react";
 import type { User } from "@supabase/supabase-js";
 import { UnifiedJob } from "@/lib/types";
 import JobCard from "@/components/JobCard";
@@ -26,6 +27,28 @@ function parseLocalCustomSources(): CustomSource[] {
   } catch {
     return [];
   }
+}
+
+// Sidebar panel: on mobile it's a collapsed <details> (tap to expand, no JS),
+// on desktop (lg+) the summary hides and content is always visible.
+function SidePanel({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+  return (
+    <details
+      open={defaultOpen}
+      className="group rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
+    >
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 p-4 text-[15px] font-semibold lg:hidden [&::-webkit-details-marker]:hidden">
+        {title}
+        <span aria-hidden className="text-xs text-zinc-400 transition-transform group-open:rotate-180">
+          ▾
+        </span>
+      </summary>
+      <div className="hidden px-4 pb-4 group-open:block lg:block lg:p-4">
+        <h2 className="mb-1 hidden font-semibold lg:block">{title}</h2>
+        {children}
+      </div>
+    </details>
+  );
 }
 
 function rankByResume(jobs: UnifiedJob[], resume: string): UnifiedJob[] {
@@ -349,10 +372,10 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-black">
       <header className="border-b border-zinc-100 bg-white dark:border-zinc-900 dark:bg-zinc-950">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">Personal Job Assistance</h1>
-            <p className="text-xs text-zinc-500">One page • All jobs • ATS score next to every Apply</p>
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-2 px-3 py-3 sm:px-4 sm:py-4">
+          <div className="min-w-0">
+            <h1 className="truncate text-lg font-bold tracking-tight sm:text-xl">Personal Job Assistance</h1>
+            <p className="truncate text-xs text-zinc-500">One page • All jobs • ATS score next to Apply</p>
           </div>
           <div className="hidden sm:block text-right">
             <p className="text-xs text-zinc-500">{resumeText ? `Resume: ${resumeText.length} chars` : "No resume — upload to enable ATS"}</p>
@@ -382,40 +405,38 @@ export default function Home() {
         onClearSources={clearSources}
       />
 
-      <main className="mx-auto max-w-6xl px-4 py-6">
-        <div className="grid gap-6 lg:grid-cols-[360px_1fr]">
-          {/* Left: Resume + Info */}
-          <div className="space-y-4 lg:sticky lg:top-[72px] lg:h-fit">
-            <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-              <h2 className="font-semibold">1. Upload Resume</h2>
+      <main className="mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-6">
+        {/* Mobile-first: jobs feed first, sidebar below. Desktop: sidebar left (sticky), feed right. */}
+        <div className="grid gap-4 sm:gap-6 lg:grid-cols-[360px_1fr]">
+          {/* Left (desktop) / Below (mobile): Resume + Sources + Info */}
+          <div className="order-2 space-y-3 sm:space-y-4 lg:order-1 lg:sticky lg:top-[72px] lg:h-fit">
+            <SidePanel title="1. Upload Resume" defaultOpen>
               <p className="mt-1 text-xs text-zinc-500">ATS scoring uses this text. Stored locally unless Supabase configured.</p>
               <div className="mt-3">
                 <ResumeUploader onText={setResumeText} initialText={resumeText} />
               </div>
-            </div>
+            </SidePanel>
 
-            <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-              <h2 className="font-semibold">2. My job sources</h2>
+            <SidePanel title="2. My job sources">
               <p className="mt-1 text-xs text-zinc-500">
                 Add RSS feeds or Greenhouse/Lever boards. Searches include them automatically.
               </p>
               <div className="mt-3">
                 <CustomSources sources={customSources} onChange={handleCustomSourcesChange} isCloud={!!user} />
               </div>
-            </div>
+            </SidePanel>
 
-            <div className="rounded-xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
-              <h3 className="text-sm font-semibold">How it works</h3>
+            <SidePanel title="How it works">
               <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-zinc-600 dark:text-zinc-400">
                 <li>Search jobs — built-in boards + your custom sources (§2).</li>
                 <li>Click <span className="rounded bg-black px-1 py-0.5 text-white">Apply ↗</span> → go to official portal.</li>
                 <li>Click <span className="rounded bg-zinc-800 px-1 py-0.5 text-white">ATS Score</span> next to any job → real Gemini score (or mock if no key).</li>
                 <li>Use <em>For You</em> to re-rank by resume keywords (no LLM cost).</li>
               </ol>
-            </div>
+            </SidePanel>
 
-            <div className="rounded-xl border border-zinc-200 bg-white p-4 text-xs dark:border-zinc-800 dark:bg-zinc-900">
-              <p className="font-semibold">Env Setup (optional)</p>
+            <SidePanel title="Env Setup (optional)">
+              <div className="text-xs">
               <p className="mt-1 text-zinc-500">
                 For real AI scoring, set <code>GEMINI_API_KEY</code> in Vercel env. For auth/DB, set
                 <code> NEXT_PUBLIC_SUPABASE_URL</code>. App works without both (localStorage + mock scores).
@@ -425,20 +446,21 @@ export default function Home() {
                   <p className="font-medium">Sources</p>
                   <ul className="mt-1">
                     {Object.entries(sources).map(([k, v]) => (
-                      <li key={k} className="flex justify-between">
-                        <span>{k}</span>
-                        <span className={v.startsWith("ok") ? "text-green-600" : "text-red-500"}>{v}</span>
+                      <li key={k} className="flex justify-between gap-2">
+                        <span className="truncate">{k}</span>
+                        <span className={`shrink-0 ${v.startsWith("ok") ? "text-green-600" : "text-red-500"}`}>{v}</span>
                       </li>
                     ))}
                   </ul>
                 </div>
               )}
-            </div>
+              </div>
+            </SidePanel>
           </div>
 
-          {/* Right: Jobs */}
-          <div>
-            <div className="mb-3 flex items-center justify-between">
+          {/* Right (desktop) / First (mobile): Jobs */}
+          <div className="order-1 min-w-0 lg:order-2">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h2 className="text-lg font-semibold">
                   {showSavedOnly ? `Saved (${savedCount})` : personalized ? "For You — ranked by resume" : `Jobs (${displayed.length})`}
