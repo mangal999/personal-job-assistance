@@ -18,6 +18,7 @@ export default function JobCard({
   const [loading, setLoading] = useState(false);
   const [mocked, setMocked] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   async function handleATS() {
     if (!resumeText || resumeText.length < 50) {
@@ -76,7 +77,21 @@ export default function JobCard({
           <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-medium break-words dark:bg-zinc-800">{job.source}</span>
         </div>
 
-        <p className="mt-2 line-clamp-3 text-sm leading-6 break-words text-zinc-700 dark:text-zinc-300">{job.description.slice(0, 280)}...</p>
+        <p
+          onClick={() => setExpanded((v) => !v)}
+          title={expanded ? "Click to collapse" : "Click to expand full description"}
+          className={`mt-2 cursor-pointer text-sm leading-6 break-words text-zinc-700 dark:text-zinc-300 ${expanded ? "whitespace-pre-line" : "line-clamp-3"}`}
+        >
+          {expanded ? job.description : `${job.description.slice(0, 280)}...`}
+        </p>
+        {job.description.length > 280 && (
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="mt-1 text-xs font-medium text-zinc-500 underline decoration-dotted underline-offset-2 hover:text-black dark:hover:text-white"
+          >
+            {expanded ? "Show less ▴" : "Show more ▾"}
+          </button>
+        )}
 
         {job.tags && job.tags.length > 0 && (
           <div className="mt-2 flex min-w-0 flex-wrap gap-1">
