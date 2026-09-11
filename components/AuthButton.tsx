@@ -39,6 +39,39 @@ function friendlyAuthError(e: unknown): string {
   return raw;
 }
 
+// Verify email magic-link callbacks. Supabase redirects email links to our
+// `emailRedirectTo` (/login). Links carry either:
+//   - ?token_hash=...&type=magiclink (PKCE-style — needs explicit verifyOtp), or
+//   - #access_token=... (implicit — supabase-js session detection picks it up).
+// Either way we scrub the tokens from the address bar afterwards.
+async function handleEmailLinkCallback(
+  supabase: NonNullable<ReturnType<typeof getSupabaseBrowser>>,
+  onError: (msg: string) => void
+) {
+  const url = new URL(window.location.href);
+  const tokenHash = url.searchParams.get("token_hash");
+  const typeParam = url.searchParams.get("type");
+  if (tokenHash) {
+    const allowed = ["signup", "invite", "magiclink", "recovery", "email_change"] as const;
+    const type = allowed.includes(typeParam as (typeof allowed)[number])
+      ? (typeParam as (typeof allowed)[number])
+      : "magiclink";
+    const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
+    url.searchParams.delete("token_hash");
+    url.searchParams.delete("type");
+    const clean = url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : "") + url.hash;
+    window.history.replaceState(null, "", clean);
+    if (error) onError(friendlyAuthError(error));
+    return;
+  }
+  if (window.location.hash.includes("access_token")) {
+    const { data } = await supabase.auth.getSession();
+    if (data.session) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  }
+}
+
 /** Header auth widget. Works without Supabase (shows setup hint). */
 export default function AuthButton() {
   const [configured] = useState(() => isSupabaseConfigured());
@@ -57,6 +90,12 @@ export default function AuthButton() {
     supabase.auth.getSession().then(({ data }) => {
       setUser(data.session?.user ?? null);
       emitAuth(data.session?.user ?? null);
+    });
+    // Pick up email magic-link callbacks (?token_hash=... or #access_token=...)
+    // landing on this page. supabase-js won't verify ?token_hash links on its own.
+    void handleEmailLinkCallback(supabase, (m) => {
+      setMsg(m);
+      setOpen(true);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
       setUser(session?.user ?? null);
@@ -99,10 +138,17 @@ export default function AuthButton() {
     setMsg(null);
     try {
       const supabase = getSupabaseBrowser()!;
-      const { error } = await supabase.auth.signInWithOtp({ email: email.trim() });
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        // Without this, Supabase falls back to the dashboard Site URL
+        // (often localhost:3000) for the magic link. /login handles the
+        // callback (code verify + link exchange) — keep it allow-listed in
+        // Supabase → Authentication → URL Configuration → Redirect URLs.
+        options: { emailRedirectTo: `${window.location.origin}/login` },
+      });
       if (error) throw error;
       setOtpSent(true);
-      setMsg("Check your email for the 6-digit code.");
+      setMsg("Check your email — enter the 6-digit code, or just click the login link (it brings you back here).");
     } catch (e) {
       setMsg(friendlyAuthError(e));
     } finally {

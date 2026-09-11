@@ -61,9 +61,26 @@ Vercel offers Supabase as a free Marketplace integration (free tier: 500MB DB, 1
 
 - [ ] Header shows **Login** (not “needs Supabase”).
 - [ ] `/login` page → Continue with Google → redirects back logged in, header shows your email + `☁️ Synced`.
+- [ ] Email login: enter email → Send code → email arrives → **either** paste the 6-digit code **or**
+  click the login link (both land you back logged in).
 - [ ] Supabase → **Table Editor → profiles**: a row appears after you upload a resume while logged in.
 - [ ] Save a ♥ job while logged in → row appears in `saved_jobs`.
 - [ ] Log out → saved jobs remain in localStorage; log back in → cloud jobs reload.
+
+## Email login: link vs 6-digit code, and redirect fix
+
+Supabase's default **Magic Link** email template sends only a *link*, no code. The app supports both —
+one dashboard tweak gets you the code too:
+
+1. Supabase → **Authentication → Email Templates → Magic Link** → make sure the body includes the
+   token variable, e.g. add a line: `Or enter this code: {{ .Token }}` → Save.
+   (The `{{ .ConfirmationURL }}` link keeps working as before — clicking it returns to `/login`
+   already logged in.)
+2. **Site URL**: Supabase → **Authentication → URL Configuration → Site URL** → set it to your
+   production URL (`https://YOUR-APP.vercel.app`). The app passes an explicit redirect (`/login`)
+   with every email request, so links follow the environment you're in — but Site URL is the
+   fallback, and the default `http://localhost:3000` is what sends deployed users to localhost.
+3. Keep both `https://YOUR-APP.vercel.app/login` and `http://localhost:3000/login` in Redirect URLs.
 
 ## Notes / limits
 
