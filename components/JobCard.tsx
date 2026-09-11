@@ -65,28 +65,28 @@ export default function JobCard({
 
   return (
     <>
-      <div className="rounded-xl border border-zinc-200 bg-white p-3 shadow-sm transition hover:shadow sm:p-4 dark:border-zinc-800 dark:bg-zinc-900">
+      <div className="min-w-0 rounded-xl border border-zinc-200 bg-white p-3 shadow-sm transition hover:shadow sm:p-4 dark:border-zinc-800 dark:bg-zinc-900">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <h3 className="line-clamp-2 text-[15px] font-semibold leading-tight">{job.title}</h3>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
+            <h3 className="line-clamp-2 text-[15px] font-semibold break-words leading-tight">{job.title}</h3>
+            <p className="mt-1 text-sm break-words text-zinc-600 dark:text-zinc-400">
               {job.company} • {job.location} {job.remote && "🌐 Remote"} • {posted}
             </p>
           </div>
-          <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-medium dark:bg-zinc-800">{job.source}</span>
+          <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-1 text-[11px] font-medium break-words dark:bg-zinc-800">{job.source}</span>
         </div>
 
-        <p className="mt-2 line-clamp-3 text-sm leading-6 text-zinc-700 dark:text-zinc-300">{job.description.slice(0, 280)}...</p>
+        <p className="mt-2 line-clamp-3 text-sm leading-6 break-words text-zinc-700 dark:text-zinc-300">{job.description.slice(0, 280)}...</p>
 
         {job.tags && job.tags.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1">
+          <div className="mt-2 flex min-w-0 flex-wrap gap-1">
             {job.tags.slice(0, 5).map((t) => (
-              <span key={t} className="rounded bg-zinc-50 px-2 py-0.5 text-[11px] dark:bg-zinc-800">
+              <span key={t} className="max-w-full rounded bg-zinc-50 px-2 py-0.5 text-[11px] break-words dark:bg-zinc-800">
                 {t}
               </span>
             ))}
-            {job.type && <span className="rounded bg-zinc-50 px-2 py-0.5 text-[11px] dark:bg-zinc-800">{job.type}</span>}
-            {job.salary && <span className="rounded bg-zinc-50 px-2 py-0.5 text-[11px] dark:bg-zinc-800">{job.salary}</span>}
+            {job.type && <span className="max-w-full rounded bg-zinc-50 px-2 py-0.5 text-[11px] break-words dark:bg-zinc-800">{job.type}</span>}
+            {job.salary && <span className="max-w-full rounded bg-zinc-50 px-2 py-0.5 text-[11px] break-words dark:bg-zinc-800">{job.salary}</span>}
           </div>
         )}
 
@@ -188,7 +188,7 @@ function Drawer({
               <p className="text-sm font-semibold">✅ Matched</p>
               <div className="mt-1 flex flex-wrap gap-1">
                 {score.matched_keywords.map((k) => (
-                  <span key={k} className="rounded bg-green-50 px-2 py-1 text-xs text-green-800 dark:bg-green-950 dark:text-green-200">
+                  <span key={k} className="max-w-full rounded bg-green-50 px-2 py-1 text-xs break-words text-green-800 dark:bg-green-950 dark:text-green-200">
                     {k}
                   </span>
                 ))}
@@ -198,7 +198,7 @@ function Drawer({
               <p className="text-sm font-semibold">⚠️ Missing</p>
               <div className="mt-1 flex flex-wrap gap-1">
                 {score.missing_keywords.map((k) => (
-                  <span key={k} className="rounded bg-red-50 px-2 py-1 text-xs text-red-800 dark:bg-red-950 dark:text-red-200">
+                  <span key={k} className="max-w-full rounded bg-red-50 px-2 py-1 text-xs break-words text-red-800 dark:bg-red-950 dark:text-red-200">
                     {k}
                   </span>
                 ))}

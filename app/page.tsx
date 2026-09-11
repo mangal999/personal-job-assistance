@@ -383,7 +383,7 @@ export default function Home() {
               {user ? `☁️ Synced as ${user.email}` : "Deploy free on Vercel/Netlify • 100% free APIs"}
             </p>
           </div>
-          <div className="sm:ml-4">
+          <div className="shrink-0 sm:ml-4">
             <AuthButton />
           </div>
         </div>
@@ -409,7 +409,7 @@ export default function Home() {
         {/* Mobile-first: jobs feed first, sidebar below. Desktop: sidebar left (sticky), feed right. */}
         <div className="grid gap-4 sm:gap-6 lg:grid-cols-[360px_1fr]">
           {/* Left (desktop) / Below (mobile): Resume + Sources + Info */}
-          <div className="order-2 space-y-3 sm:space-y-4 lg:order-1 lg:sticky lg:top-[72px] lg:h-fit">
+          <div className="order-2 min-w-0 space-y-3 sm:space-y-4 lg:order-1 lg:sticky lg:top-[72px] lg:h-fit">
             <SidePanel title="1. Upload Resume" defaultOpen>
               <p className="mt-1 text-xs text-zinc-500">ATS scoring uses this text. Stored locally unless Supabase configured.</p>
               <div className="mt-3">
@@ -446,9 +446,9 @@ export default function Home() {
                   <p className="font-medium">Sources</p>
                   <ul className="mt-1">
                     {Object.entries(sources).map(([k, v]) => (
-                      <li key={k} className="flex justify-between gap-2">
-                        <span className="truncate">{k}</span>
-                        <span className={`shrink-0 ${v.startsWith("ok") ? "text-green-600" : "text-red-500"}`}>{v}</span>
+                      <li key={k} className="flex min-w-0 justify-between gap-2">
+                        <span className="min-w-0 truncate">{k}</span>
+                        <span className={`min-w-0 text-right break-words ${v.startsWith("ok") ? "text-green-600" : "text-red-500"}`}>{v}</span>
                       </li>
                     ))}
                   </ul>

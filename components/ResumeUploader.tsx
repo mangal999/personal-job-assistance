@@ -109,7 +109,7 @@ export default function ResumeUploader({
             if (f) parseFile(f);
           }}
         />
-        <p className="text-sm font-medium">
+        <p className="text-sm font-medium break-all">
           {parsing ? "Parsing..." : filename ? filename : "Drop resume here or click to upload"}
         </p>
         <p className="mt-1 text-xs text-zinc-500">PDF, DOCX, TXT — max 3MB — stored locally (or Supabase if configured)</p>
