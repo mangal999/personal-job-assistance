@@ -10,6 +10,35 @@ export function emitAuth(user: User | null) {
   window.dispatchEvent(new CustomEvent<User | null>(PJA_AUTH_EVENT, { detail: user }));
 }
 
+// Supabase returns terse API errors — translate the common ones into
+// actionable setup steps instead of showing raw JSON to the user.
+function friendlyAuthError(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  const lower = raw.toLowerCase();
+  if (lower.includes("provider is not enabled") || lower.includes("unsupported provider")) {
+    return (
+      "Google login is not enabled on this Supabase project yet. " +
+      "Fix: Supabase dashboard → Authentication → Providers → Google → paste your Google " +
+      "Client ID + Client Secret (Google Cloud Console → APIs & Services → Credentials → " +
+      "OAuth client ID → Web app), then Save. The toggle alone is NOT enough. " +
+      "Also confirm the app uses keys from the SAME project: Supabase Settings → API → " +
+      "Project URL must match your NEXT_PUBLIC_SUPABASE_URL."
+    );
+  }
+  if (
+    lower.includes("redirect") ||
+    lower.includes("unauthorized_client") ||
+    lower.includes("validation_failed")
+  ) {
+    return (
+      `${raw} — Fix: Supabase dashboard → Authentication → URL Configuration → add ` +
+      `your app URL + "/login" to Redirect URLs (e.g. https://YOUR-APP.vercel.app/login ` +
+      `and http://localhost:3000/login for local dev).`
+    );
+  }
+  return raw;
+}
+
 /** Header auth widget. Works without Supabase (shows setup hint). */
 export default function AuthButton() {
   const [configured] = useState(() => isSupabaseConfigured());
@@ -59,7 +88,7 @@ export default function AuthButton() {
       });
       if (error) throw error;
     } catch (e) {
-      setMsg((e as Error).message);
+      setMsg(friendlyAuthError(e));
     } finally {
       setBusy(false);
     }
@@ -75,7 +104,7 @@ export default function AuthButton() {
       setOtpSent(true);
       setMsg("Check your email for the 6-digit code.");
     } catch (e) {
-      setMsg((e as Error).message);
+      setMsg(friendlyAuthError(e));
     } finally {
       setBusy(false);
     }
@@ -94,7 +123,7 @@ export default function AuthButton() {
       if (error) throw error;
       setOpen(false);
     } catch (e) {
-      setMsg((e as Error).message);
+      setMsg(friendlyAuthError(e));
     } finally {
       setBusy(false);
     }

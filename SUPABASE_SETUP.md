@@ -23,9 +23,18 @@ Vercel offers Supabase as a free Marketplace integration (free tier: 500MB DB, 1
    > `create table` is `if not exists`, and the `custom_sources` policy is wrapped in an
    > idempotent block (old-table policy lines may report "already exists", which is harmless).
 4. **Enable login providers** in Supabase dashboard → **Authentication → Providers**:
-   - **Google**: ON. Create OAuth credentials in [Google Cloud Console](https://console.cloud.google.com/)
-     (APIs & Services → Credentials → OAuth client ID → Web app), then paste Client ID/Secret into Supabase.
+   - **Google**: expand the Google row → paste **Client ID + Client Secret** from [Google Cloud Console](https://console.cloud.google.com/)
+     (APIs & Services → Credentials → Create Credentials → OAuth client ID → Web application) → **Save**.
+     ⚠️ The ON toggle alone is NOT enough — without the Client ID/Secret, login fails with
+     `400 "provider is not enabled"`. After saving, the provider row should show as configured/enabled.
+     In Google Cloud Console, also add your Supabase callback URL under Authorized redirect URIs:
+     `https://<YOUR-PROJECT-REF>.supabase.co/auth/v1/callback` (Supabase shows this URL on the Google provider page).
    - **Email**: ON (magic OTP is on by default — the app's Login box uses it, no config needed).
+   - **Same-project check** (most common gotcha with the Vercel integration): the project where you
+     enabled Google must be the SAME project your app keys point to. Compare Supabase
+     **Settings → API → Project URL** with your app's `NEXT_PUBLIC_SUPABASE_URL` — the
+     `https://xyzcompany.supabase.co` host must match exactly. If you have two projects
+     (e.g. a manual one + the Vercel-created one), enable Google in the one matching the URL.
 5. **Redirect URLs** in Supabase → **Authentication → URL Configuration**:
    - Site URL: `https://YOUR-APP.vercel.app`
    - Additional redirect URLs: `https://YOUR-APP.vercel.app/login`, `http://localhost:3000/login`
