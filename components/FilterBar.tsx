@@ -74,7 +74,9 @@ export default function FilterBar({
         <div className="mx-auto mt-2 flex max-w-6xl flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:flex-wrap sm:overflow-visible sm:pb-0 [&::-webkit-scrollbar]:hidden">
           <span className="shrink-0 text-xs text-zinc-500">Sources:</span>
           {availableSources.map((s) => {
-            const active = selectedSources.length === 0 || selectedSources.includes(s);
+            // Explicit toggle: a chip is on only if selected. Deselecting the
+            // last one leaves an empty selection (empty feed), never "all".
+            const active = selectedSources.includes(s);
             return (
               <button
                 key={s}
@@ -95,12 +97,12 @@ export default function FilterBar({
               </button>
             );
           })}
-          {selectedSources.length > 0 && (
-            <button onClick={onClearSources} className="shrink-0 whitespace-nowrap text-xs text-zinc-500 underline">
+          {selectedSources.length !== availableSources.length && (
+            <button onClick={onClearSources} title="Select all sources" className="shrink-0 whitespace-nowrap text-xs text-zinc-500 underline">
               All
             </button>
           )}
-          <span className="hidden shrink-0 text-[11px] text-zinc-400 sm:inline">*needs key • empty = all sources</span>
+          <span className="hidden shrink-0 text-[11px] text-zinc-400 sm:inline">*needs key • tap a chip to toggle it</span>
         </div>
       )}
     </div>

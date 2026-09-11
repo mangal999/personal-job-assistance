@@ -8,11 +8,13 @@ export default function JobCard({
   resumeText,
   onSave,
   saved,
+  onNeedResume,
 }: {
   job: UnifiedJob;
   resumeText: string;
   onSave: (job: UnifiedJob) => void;
   saved: boolean;
+  onNeedResume: () => void;
 }) {
   const [score, setScore] = useState<ATSScore | null>(null);
   const [loading, setLoading] = useState(false);
@@ -22,7 +24,8 @@ export default function JobCard({
 
   async function handleATS() {
     if (!resumeText || resumeText.length < 50) {
-      alert("Upload your resume first to get ATS score.");
+      // No alert() — the page shows a toast + takes the user to the Resume panel.
+      onNeedResume();
       return;
     }
     // if cached score exists, just open

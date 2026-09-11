@@ -10,6 +10,7 @@ import ResumeUploader from "@/components/ResumeUploader";
 import AuthButton, { PJA_AUTH_EVENT } from "@/components/AuthButton";
 import CustomSources, { encodeCustomParam } from "@/components/CustomSources";
 import type { CustomSource } from "@/lib/custom-source-types";
+import { BUILTIN_SOURCE_NAMES } from "@/lib/custom-source-types";
 import { getSupabaseBrowser, isSupabaseConfigured } from "@/lib/supabase";
 
 const LS_RESUME = "pja_resume_text";
@@ -94,10 +95,41 @@ export default function Home() {
     "RemoteOK",
     "JSearch",
   ]);
-  const [selectedSources, setSelectedSources] = useState<string[]>([]);
+  // Explicit multi-select: every chip toggles ONLY itself. Empty = none
+  // selected (not "all"). Initialized to all built-ins; custom names are
+  // appended when added/enabled (see handleCustomSourcesChange).
+  const [selectedSources, setSelectedSources] = useState<string[]>([...BUILTIN_SOURCE_NAMES]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [savedHashes, setSavedHashes] = useState<Set<string>>(new Set());
   const [personalized, setPersonalized] = useState(false);
+  // Mobile tabs: feed first, but Resume/Sources one tap away (no long scroll).
+  const [mobileTab, setMobileTab] = useState<"jobs" | "resume" | "sources">("jobs");
+  // Pagination: render only a page at a time (heavy DOM on phones otherwise).
+  const [pageSize, setPageSize] = useState(20);
+  const [visibleCount, setVisibleCount] = useState(20);
+  const pageSizeRef = useRef(20);
+  // Toast + resume-panel flash (ATS-without-resume guidance).
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | null>(null);
+  const [resumeFlash, setResumeFlash] = useState(false);
+
+  function showToast(msg: string) {
+    setToast(msg);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 4500);
+  }
+
+  // "What + where": open the Resume panel wherever it lives (mobile tab or
+  // desktop sidebar), scroll it into view, and flash-highlight it.
+  function handleNeedResume() {
+    setMobileTab("resume");
+    showToast("Upload your resume below first — then tap ATS Score on any job.");
+    window.setTimeout(() => {
+      document.getElementById("pja-resume")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 60);
+    setResumeFlash(true);
+    window.setTimeout(() => setResumeFlash(false), 2600);
+  }
   const [user, setUser] = useState<User | null>(null);
   const [customSources, setCustomSources] = useState<CustomSource[]>([]);
   const userRef = useRef<User | null>(null);
@@ -158,7 +190,16 @@ export default function Home() {
           localStorage.setItem(LS_CUSTOM, JSON.stringify(arr));
           customSourcesRef.current = arr;
           setCustomSources(arr);
-          void fetchJobs({ customs: arr });
+          // Chips follow: enabled cloud customs join the selection.
+          const chips = [...selectedSourcesRef.current];
+          for (const c of arr) {
+            if (c.enabled !== false && !chips.some((n) => n.toLowerCase() === c.name.toLowerCase())) {
+              chips.push(c.name);
+            }
+          }
+          selectedSourcesRef.current = chips;
+          setSelectedSources(chips);
+          void fetchJobs({ customs: arr, sources: chips });
         }
       }
     };
@@ -204,7 +245,7 @@ export default function Home() {
     const loc = (args?.location ?? location).trim();
     const rem = args?.remoteOnly ?? remoteOnly;
     const srcs = args?.sources ?? selectedSourcesRef.current;
-    const customs = args?.customs ?? customSourcesRef.current;
+    const allCustoms = args?.customs ?? customSourcesRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -212,8 +253,19 @@ export default function Home() {
       if (qq) url.searchParams.set("q", qq);
       if (loc) url.searchParams.set("location", loc);
       if (rem) url.searchParams.set("remote", "true");
-      if (srcs.length > 0) url.searchParams.set("sources", srcs.join(","));
-      const customParam = encodeCustomParam(customs);
+      if (srcs.length > 0) {
+        url.searchParams.set("sources", srcs.join(","));
+      } else {
+        // Explicit "none selected" marker — without it, a bare URL would
+        // reload as "all". The API treats unknown names as empty result.
+        url.searchParams.set("sources", "none");
+      }
+      // Only send defs for enabled + chip-selected customs.
+      const selSet = new Set(srcs.map((s) => s.toLowerCase()));
+      const customsToSend = allCustoms.filter(
+        (c) => c.enabled !== false && selSet.has(c.name.toLowerCase())
+      );
+      const customParam = encodeCustomParam(customsToSend);
       if (customParam) url.searchParams.set("custom", customParam);
 
       // update browser URL (shareable filter URL)
@@ -221,9 +273,20 @@ export default function Home() {
       if (qq) newParams.set("q", qq);
       if (loc) newParams.set("location", loc);
       if (rem) newParams.set("remote", "true");
-      if (srcs.length > 0) newParams.set("sources", srcs.join(","));
+      newParams.set("sources", srcs.length > 0 ? srcs.join(",") : "none");
       const qs = newParams.toString();
       window.history.replaceState(null, "", qs ? `?${qs}` : window.location.pathname);
+
+      // No sources selected → empty feed by explicit choice (no request).
+      if (srcs.length === 0) {
+        setJobs([]);
+        setSources(null);
+        setServedFromCache(false);
+        setPersonalized(false);
+        setVisibleCount(0);
+        setLoading(false);
+        return;
+      }
 
       // Bypass HTTP cache on explicit user searches so results always
       // reflect the current query, not a cached older one.
@@ -240,6 +303,8 @@ export default function Home() {
       setJobs(fetched);
       setSources(data.sources);
       setServedFromCache(!!data.cached);
+      // New result set → back to first page.
+      setVisibleCount(pageSizeRef.current);
       if (Array.isArray(data.availableSources) && data.availableSources.length > 0) {
         setAvailableSources(data.availableSources);
       }
@@ -269,8 +334,19 @@ export default function Home() {
     const urlLoc = params.get("location") || "";
     const urlRemote = params.get("remote") === "true";
     const srcParam = params.get("sources") || params.get("source");
-    const urlSources = srcParam ? srcParam.split(",").map((x) => x.trim()).filter(Boolean) : [];
     const localCustoms = parseLocalCustomSources();
+    // Explicit selection: ?sources=a,b scopes; ?sources=none = nothing;
+    // absent = all built-ins + enabled customs.
+    let urlSources: string[];
+    if (srcParam) {
+      urlSources = srcParam.split(",").map((x) => x.trim()).filter((x) => x && x.toLowerCase() !== "none");
+      if (srcParam.split(",").some((x) => x.trim().toLowerCase() === "none")) urlSources = [];
+    } else {
+      urlSources = [...BUILTIN_SOURCE_NAMES];
+      for (const c of localCustoms) {
+        if (c.enabled !== false) urlSources.push(c.name);
+      }
+    }
     setQ(urlQ);
     setLocation(urlLoc);
     setRemoteOnly(urlRemote);
@@ -287,35 +363,70 @@ export default function Home() {
   }, [resumeText]);
 
   function toggleSource(source: string) {
-    setSelectedSources((prev) => {
-      // No selection = all sources. Toggling from "all" starts a new
-      // single-source selection; toggling the last one off returns to all.
-      let next: string[];
-      if (prev.length === 0) {
-        next = [source];
-      } else if (prev.includes(source)) {
-        next = prev.filter((s) => s !== source);
-      } else {
-        next = [...prev, source];
-      }
-      selectedSourcesRef.current = next;
-      void fetchJobs({ q, location, remoteOnly, sources: next });
-      return next;
-    });
+    // Pure single-chip toggle (see note below on why this must stay outside
+    // setState updaters). Clicking affects ONLY the clicked chip — deselecting
+    // the last one yields an explicitly empty selection (empty feed), never a
+    // snap-back to "all".
+    // NOTE: kept outside setState updater on purpose. Updaters must be pure —
+    // React may run them mid-render (and double-run in dev), and the fetch +
+    // history.replaceState side effect below used to fire during render,
+    // tripping Next's Router ("Cannot update a component while rendering")
+    // and occasionally dropping the toggle (chip stuck selected).
+    const prev = selectedSourcesRef.current;
+    const next = prev.includes(source) ? prev.filter((s) => s !== source) : [...prev, source];
+    selectedSourcesRef.current = next;
+    setSelectedSources(next);
+    void fetchJobs({ q, location, remoteOnly, sources: next });
   }
 
   function clearSources() {
-    setSelectedSources([]);
-    selectedSourcesRef.current = [];
-    void fetchJobs({ q, location, remoteOnly, sources: [] });
+    // "All" = explicitly select everything (built-ins + enabled customs).
+    const all = [...BUILTIN_SOURCE_NAMES];
+    for (const c of customSourcesRef.current) {
+      if (c.enabled !== false && !all.some((s) => s.toLowerCase() === c.name.toLowerCase())) {
+        all.push(c.name);
+      }
+    }
+    selectedSourcesRef.current = all;
+    setSelectedSources(all);
+    void fetchJobs({ q, location, remoteOnly, sources: all });
+  }
+
+  function changePageSize(n: number) {
+    setPageSize(n);
+    pageSizeRef.current = n;
+    setVisibleCount(n);
   }
 
   // Custom sources: persist locally always, sync to Supabase when logged in,
-  // and re-run the search so the new/removed source takes effect immediately.
+  // keep chips in sync (added/enabled → chip on, removed/disabled → chip off),
+  // and re-run the search so the change takes effect immediately.
   function handleCustomSourcesChange(next: CustomSource[]) {
+    const prev = customSourcesRef.current;
+    const prevByName = new Map(prev.map((s) => [s.name.toLowerCase(), s]));
+    const nextByName = new Map(next.map((s) => [s.name.toLowerCase(), s]));
+    let chips = [...selectedSourcesRef.current];
+    // Removed sources → drop their chips.
+    chips = chips.filter((name) => {
+      const key = name.toLowerCase();
+      return !prevByName.has(key) || nextByName.has(key);
+    });
+    // Added or (re-)enabled sources → ensure chip on.
+    for (const s of next) {
+      const key = s.name.toLowerCase();
+      const was = prevByName.get(key);
+      if (s.enabled !== false && (!was || was.enabled === false)) {
+        if (!chips.some((n) => n.toLowerCase() === key)) chips.push(s.name);
+      }
+      if (s.enabled === false) {
+        chips = chips.filter((n) => n.toLowerCase() !== key);
+      }
+    }
     setCustomSources(next);
     customSourcesRef.current = next;
     localStorage.setItem(LS_CUSTOM, JSON.stringify(next));
+    selectedSourcesRef.current = chips;
+    setSelectedSources(chips);
     const u = userRef.current;
     if (u && isSupabaseConfigured()) {
       const supabase = getSupabaseBrowser()!;
@@ -362,12 +473,16 @@ export default function Home() {
     }
   }
 
-  const displayed = (showSavedOnly
+  const filtered = (showSavedOnly
     ? jobs.filter((j) => savedHashes.has(`${j.title.toLowerCase()}|${j.company.toLowerCase()}`))
     : jobs
-  ).filter((j) => selectedSources.length === 0 || selectedSources.includes(j.source));
+  ).filter((j) => selectedSources.includes(j.source));
+
+  const displayed = filtered.slice(0, visibleCount);
+  const remaining = Math.max(filtered.length - displayed.length, 0);
 
   const savedCount = savedHashes.size;
+  const enabledCustomCount = customSources.filter((s) => s.enabled !== false).length;
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-black">
@@ -406,74 +521,121 @@ export default function Home() {
       />
 
       <main className="mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-6">
-        {/* Mobile-first: jobs feed first, sidebar below. Desktop: sidebar left (sticky), feed right. */}
+        {/* Mobile tabs: Jobs feed first, Resume/Sources one tap away (no long scroll).
+            Desktop: hidden — sidebar left (sticky), feed right. */}
         <div className="grid gap-4 sm:gap-6 lg:grid-cols-[360px_1fr]">
-          {/* Left (desktop) / Below (mobile): Resume + Sources + Info */}
-          <div className="order-2 min-w-0 space-y-3 sm:space-y-4 lg:order-1 lg:sticky lg:top-[72px] lg:h-fit">
-            <SidePanel title="1. Upload Resume" defaultOpen>
-              <p className="mt-1 text-xs text-zinc-500">ATS scoring uses this text. Stored locally unless Supabase configured.</p>
-              <div className="mt-3">
-                <ResumeUploader onText={setResumeText} initialText={resumeText} />
-              </div>
-            </SidePanel>
-
-            <SidePanel title="2. My job sources">
-              <p className="mt-1 text-xs text-zinc-500">
-                Add RSS feeds or Greenhouse/Lever boards. Searches include them automatically.
-              </p>
-              <div className="mt-3">
-                <CustomSources sources={customSources} onChange={handleCustomSourcesChange} isCloud={!!user} />
-              </div>
-            </SidePanel>
-
-            <SidePanel title="How it works">
-              <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-zinc-600 dark:text-zinc-400">
-                <li>Search jobs — built-in boards + your custom sources (§2).</li>
-                <li>Click <span className="rounded bg-black px-1 py-0.5 text-white">Apply ↗</span> → go to official portal.</li>
-                <li>Click <span className="rounded bg-zinc-800 px-1 py-0.5 text-white">ATS Score</span> next to any job → real Gemini score (or mock if no key).</li>
-                <li>Use <em>For You</em> to re-rank by resume keywords (no LLM cost).</li>
-              </ol>
-            </SidePanel>
-
-            <SidePanel title="Env Setup (optional)">
-              <div className="text-xs">
-              <p className="mt-1 text-zinc-500">
-                For real AI scoring, set <code>GEMINI_API_KEY</code> in Vercel env. For auth/DB, set
-                <code> NEXT_PUBLIC_SUPABASE_URL</code>. App works without both (localStorage + mock scores).
-              </p>
-              {sources && (
-                <div className="mt-2 rounded bg-zinc-50 p-2 dark:bg-zinc-800">
-                  <p className="font-medium">Sources</p>
-                  <ul className="mt-1">
-                    {Object.entries(sources).map(([k, v]) => (
-                      <li key={k} className="flex min-w-0 justify-between gap-2">
-                        <span className="min-w-0 truncate">{k}</span>
-                        <span className={`min-w-0 text-right break-words ${v.startsWith("ok") ? "text-green-600" : "text-red-500"}`}>{v}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              </div>
-            </SidePanel>
+          <div className="order-1 flex gap-2 lg:hidden" role="tablist" aria-label="Sections">
+            {(
+              [
+                { id: "jobs", label: `Jobs (${filtered.length})` },
+                { id: "resume", label: resumeText.length > 50 ? "Resume ✓" : "Resume !" },
+                { id: "sources", label: `Sources (${enabledCustomCount})` },
+              ] as const
+            ).map((t) => (
+              <button
+                key={t.id}
+                role="tab"
+                aria-selected={mobileTab === t.id}
+                onClick={() => setMobileTab(t.id)}
+                className={`flex-1 rounded-full px-3 py-2 text-xs font-medium ${
+                  mobileTab === t.id
+                    ? "bg-black text-white dark:bg-white dark:text-black"
+                    : "border border-zinc-200 dark:border-zinc-800"
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
 
-          {/* Right (desktop) / First (mobile): Jobs */}
-          <div className="order-1 min-w-0 lg:order-2">
+          {/* Sidebar (desktop) / tab panels (mobile) */}
+          <div className="order-3 min-w-0 space-y-3 sm:space-y-4 lg:order-1 lg:sticky lg:top-[72px] lg:h-fit">
+            <div id="pja-resume" className={`${mobileTab === "resume" ? "" : "hidden"} scroll-mt-24 lg:block ${resumeFlash ? "rounded-xl ring-2 ring-black dark:ring-white" : ""}`}>
+              <SidePanel title="1. Upload Resume" defaultOpen>
+                <p className="mt-1 text-xs text-zinc-500">ATS scoring uses this text. Stored locally unless Supabase configured.</p>
+                <div className="mt-3">
+                  <ResumeUploader onText={setResumeText} initialText={resumeText} />
+                </div>
+              </SidePanel>
+            </div>
+
+            <div className={`${mobileTab === "sources" ? "" : "hidden"} lg:block`}>
+              <SidePanel title="2. My job sources" defaultOpen>
+                <p className="mt-1 text-xs text-zinc-500">
+                  Add RSS feeds or Greenhouse/Lever boards. Searches include them automatically.
+                </p>
+                <div className="mt-3">
+                  <CustomSources sources={customSources} onChange={handleCustomSourcesChange} isCloud={!!user} />
+                </div>
+              </SidePanel>
+            </div>
+
+            <div className="hidden lg:block">
+              <SidePanel title="How it works">
+                <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs leading-5 text-zinc-600 dark:text-zinc-400">
+                  <li>Search jobs — built-in boards + your custom sources (§2).</li>
+                  <li>Click <span className="rounded bg-black px-1 py-0.5 text-white">Apply ↗</span> → go to official portal.</li>
+                  <li>Click <span className="rounded bg-zinc-800 px-1 py-0.5 text-white">ATS Score</span> next to any job → real Gemini score (or mock if no key).</li>
+                  <li>Use <em>For You</em> to re-rank by resume keywords (no LLM cost).</li>
+                </ol>
+              </SidePanel>
+            </div>
+
+            <div className="hidden lg:block">
+              <SidePanel title="Env Setup (optional)">
+                <div className="text-xs">
+                <p className="mt-1 text-zinc-500">
+                  For real AI scoring, set <code>GEMINI_API_KEY</code> in Vercel env. For auth/DB, set
+                  <code> NEXT_PUBLIC_SUPABASE_URL</code>. App works without both (localStorage + mock scores).
+                </p>
+                {sources && (
+                  <div className="mt-2 rounded bg-zinc-50 p-2 dark:bg-zinc-800">
+                    <p className="font-medium">Sources</p>
+                    <ul className="mt-1">
+                      {Object.entries(sources).map(([k, v]) => (
+                        <li key={k} className="flex min-w-0 justify-between gap-2">
+                          <span className="min-w-0 truncate">{k}</span>
+                          <span className={`min-w-0 text-right break-words ${v.startsWith("ok") ? "text-green-600" : "text-red-500"}`}>{v}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                </div>
+              </SidePanel>
+            </div>
+          </div>
+
+          {/* Feed (desktop right / mobile jobs tab) */}
+          <div className={`order-2 min-w-0 lg:order-2 ${mobileTab === "jobs" ? "" : "hidden"} lg:block`}>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h2 className="text-lg font-semibold">
-                  {showSavedOnly ? `Saved (${savedCount})` : personalized ? "For You — ranked by resume" : `Jobs (${displayed.length})`}
+                  {showSavedOnly ? `Saved (${savedCount})` : personalized ? "For You — ranked by resume" : `Jobs (${filtered.length})`}
                 </h2>
                 <p className="text-xs text-zinc-500">
                   {loading
                     ? `Searching${q.trim() ? ` for "${q.trim()}"` : ""}...`
                     : error
                       ? error
-                      : `Showing ${displayed.length} jobs${q.trim() ? ` for "${q.trim()}"` : ""}${servedFromCache ? " • served from 3-min cache" : " • live"}`}
+                      : `Showing ${displayed.length} of ${filtered.length}${q.trim() ? ` for "${q.trim()}"` : ""}${servedFromCache ? " • cached" : " • live"}`}
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-1 text-xs text-zinc-500">
+                  Per page
+                  <select
+                    value={pageSize}
+                    onChange={(e) => changePageSize(Number(e.target.value))}
+                    className="rounded-full border border-zinc-200 bg-white px-2 py-1 text-xs dark:border-zinc-800 dark:bg-black"
+                  >
+                    {[10, 20, 50].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   onClick={() => setShowSavedOnly(false)}
                   className={`rounded-full px-3 py-1 text-xs ${!showSavedOnly ? "bg-black text-white dark:bg-white dark:text-black" : "border dark:border-zinc-800"}`}
@@ -503,9 +665,13 @@ export default function Home() {
               </div>
             )}
 
-            {!loading && !error && displayed.length === 0 && (
+            {!loading && !error && filtered.length === 0 && (
               <div className="rounded-xl border border-dashed p-8 text-center text-sm text-zinc-500">
-                No jobs found{q.trim() ? ` for "${q.trim()}"` : ""}. Try a different keyword (e.g. &quot;designer&quot;, &quot;accountant&quot;, &quot;nurse&quot;) or uncheck Remote only.
+                {selectedSources.length === 0 ? (
+                  <>No sources selected — tap the source chips above to enable job boards.</>
+                ) : (
+                  <>No jobs found{q.trim() ? ` for "${q.trim()}"` : ""}. Try a different keyword (e.g. &quot;designer&quot;, &quot;accountant&quot;, &quot;nurse&quot;) or uncheck Remote only.</>
+                )}
               </div>
             )}
 
@@ -517,9 +683,19 @@ export default function Home() {
                   resumeText={resumeText}
                   onSave={toggleSave}
                   saved={savedHashes.has(`${job.title.toLowerCase()}|${job.company.toLowerCase()}`)}
+                  onNeedResume={handleNeedResume}
                 />
               ))}
             </div>
+
+            {!loading && !error && remaining > 0 && (
+              <button
+                onClick={() => setVisibleCount((c) => c + pageSizeRef.current)}
+                className="mt-4 w-full rounded-full border border-zinc-200 bg-white px-4 py-2.5 text-sm font-medium hover:border-zinc-400 sm:py-2 dark:border-zinc-800 dark:bg-zinc-900"
+              >
+                Load more ({remaining} remaining)
+              </button>
+            )}
           </div>
         </div>
       </main>
@@ -527,6 +703,15 @@ export default function Home() {
       <footer className="border-t border-zinc-100 bg-white py-6 text-center text-xs text-zinc-500 dark:border-zinc-900 dark:bg-zinc-950">
         Built with Next.js 16 • Deploy to Vercel/Netlify free • Arbeitnow + Remotive free APIs • Gemini ATS • <a href="/PLAN.md" className="underline">Plan</a>
       </footer>
+
+      {toast && (
+        <div
+          role="status"
+          className="fixed bottom-4 left-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-2xl bg-black px-4 py-3 text-center text-xs leading-5 text-white shadow-xl dark:bg-white dark:text-black"
+        >
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
