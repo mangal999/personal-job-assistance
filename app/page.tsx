@@ -8,7 +8,7 @@ import JobCard from "@/components/JobCard";
 import FilterBar from "@/components/FilterBar";
 import ResumeUploader from "@/components/ResumeUploader";
 import AuthButton, { PJA_AUTH_EVENT } from "@/components/AuthButton";
-import CustomSources, { encodeCustomParam } from "@/components/CustomSources";
+import { encodeCustomParam } from "@/components/CustomSources";
 import type { CustomSource } from "@/lib/custom-source-types";
 import { BUILTIN_SOURCE_NAMES } from "@/lib/custom-source-types";
 import { getSupabaseBrowser, isSupabaseConfigured } from "@/lib/supabase";
@@ -88,22 +88,13 @@ export default function Home() {
   const [resumeText, setResumeText] = useState("");
   const [sources, setSources] = useState<Record<string, string> | null>(null);
   const [servedFromCache, setServedFromCache] = useState(false);
-  const [availableSources, setAvailableSources] = useState<string[]>([
-    "Arbeitnow",
-    "Remotive",
-    "Adzuna",
-    "RemoteOK",
-    "JSearch",
-  ]);
-  // Explicit multi-select: every chip toggles ONLY itself. Empty = none
-  // selected (not "all"). Initialized to all built-ins; custom names are
-  // appended when added/enabled (see handleCustomSourcesChange).
+  // Source chips are hidden — every search covers all built-ins.
   const [selectedSources, setSelectedSources] = useState<string[]>([...BUILTIN_SOURCE_NAMES]);
   const [showSavedOnly, setShowSavedOnly] = useState(false);
   const [savedHashes, setSavedHashes] = useState<Set<string>>(new Set());
   const [personalized, setPersonalized] = useState(false);
   // Mobile tabs: feed first, but Resume/Sources one tap away (no long scroll).
-  const [mobileTab, setMobileTab] = useState<"jobs" | "resume" | "sources">("jobs");
+  const [mobileTab, setMobileTab] = useState<"jobs" | "resume">("jobs");
   // Pagination: render only a page at a time (heavy DOM on phones otherwise).
   const [pageSize, setPageSize] = useState(20);
   const [visibleCount, setVisibleCount] = useState(20);
@@ -140,12 +131,6 @@ export default function Home() {
   useEffect(() => {
     customSourcesRef.current = customSources;
   }, [customSources]);
-
-  // Ensure a profiles row exists (custom_sources/saved_jobs FK references it).
-  async function ensureProfile(u: User) {
-    const supabase = getSupabaseBrowser()!;
-    await supabase.from("profiles").upsert({ id: u.id, email: u.email }, { onConflict: "id" });
-  }
 
   // Track login state (emitted by AuthButton). On login, pull cloud data.
   useEffect(() => {
@@ -305,9 +290,6 @@ export default function Home() {
       setServedFromCache(!!data.cached);
       // New result set → back to first page.
       setVisibleCount(pageSizeRef.current);
-      if (Array.isArray(data.availableSources) && data.availableSources.length > 0) {
-        setAvailableSources(data.availableSources);
-      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -333,19 +315,14 @@ export default function Home() {
     const urlQ = params.get("q") || "";
     const urlLoc = params.get("location") || "";
     const urlRemote = params.get("remote") === "true";
-    const srcParam = params.get("sources") || params.get("source");
     const localCustoms = parseLocalCustomSources();
-    // Explicit selection: ?sources=a,b scopes; ?sources=none = nothing;
-    // absent = all built-ins + enabled customs.
-    let urlSources: string[];
-    if (srcParam) {
-      urlSources = srcParam.split(",").map((x) => x.trim()).filter((x) => x && x.toLowerCase() !== "none");
-      if (srcParam.split(",").some((x) => x.trim().toLowerCase() === "none")) urlSources = [];
-    } else {
-      urlSources = [...BUILTIN_SOURCE_NAMES];
-      for (const c of localCustoms) {
-        if (c.enabled !== false) urlSources.push(c.name);
-      }
+    // Source chips are hidden — always search all built-ins + enabled customs.
+    // The ?sources= URL param is ignored so stale URLs (e.g. listing the
+    // removed Adzuna, or missing LinkedIn India) can never strand the feed
+    // with zero results and no UI to fix it.
+    const urlSources: string[] = [...BUILTIN_SOURCE_NAMES];
+    for (const c of localCustoms) {
+      if (c.enabled !== false) urlSources.push(c.name);
     }
     setQ(urlQ);
     setLocation(urlLoc);
@@ -362,85 +339,10 @@ export default function Home() {
     localStorage.setItem(LS_RESUME, resumeText);
   }, [resumeText]);
 
-  function toggleSource(source: string) {
-    // Pure single-chip toggle (see note below on why this must stay outside
-    // setState updaters). Clicking affects ONLY the clicked chip — deselecting
-    // the last one yields an explicitly empty selection (empty feed), never a
-    // snap-back to "all".
-    // NOTE: kept outside setState updater on purpose. Updaters must be pure —
-    // React may run them mid-render (and double-run in dev), and the fetch +
-    // history.replaceState side effect below used to fire during render,
-    // tripping Next's Router ("Cannot update a component while rendering")
-    // and occasionally dropping the toggle (chip stuck selected).
-    const prev = selectedSourcesRef.current;
-    const next = prev.includes(source) ? prev.filter((s) => s !== source) : [...prev, source];
-    selectedSourcesRef.current = next;
-    setSelectedSources(next);
-    void fetchJobs({ q, location, remoteOnly, sources: next });
-  }
-
-  function clearSources() {
-    // "All" = explicitly select everything (built-ins + enabled customs).
-    const all = [...BUILTIN_SOURCE_NAMES];
-    for (const c of customSourcesRef.current) {
-      if (c.enabled !== false && !all.some((s) => s.toLowerCase() === c.name.toLowerCase())) {
-        all.push(c.name);
-      }
-    }
-    selectedSourcesRef.current = all;
-    setSelectedSources(all);
-    void fetchJobs({ q, location, remoteOnly, sources: all });
-  }
-
   function changePageSize(n: number) {
     setPageSize(n);
     pageSizeRef.current = n;
     setVisibleCount(n);
-  }
-
-  // Custom sources: persist locally always, sync to Supabase when logged in,
-  // keep chips in sync (added/enabled → chip on, removed/disabled → chip off),
-  // and re-run the search so the change takes effect immediately.
-  function handleCustomSourcesChange(next: CustomSource[]) {
-    const prev = customSourcesRef.current;
-    const prevByName = new Map(prev.map((s) => [s.name.toLowerCase(), s]));
-    const nextByName = new Map(next.map((s) => [s.name.toLowerCase(), s]));
-    let chips = [...selectedSourcesRef.current];
-    // Removed sources → drop their chips.
-    chips = chips.filter((name) => {
-      const key = name.toLowerCase();
-      return !prevByName.has(key) || nextByName.has(key);
-    });
-    // Added or (re-)enabled sources → ensure chip on.
-    for (const s of next) {
-      const key = s.name.toLowerCase();
-      const was = prevByName.get(key);
-      if (s.enabled !== false && (!was || was.enabled === false)) {
-        if (!chips.some((n) => n.toLowerCase() === key)) chips.push(s.name);
-      }
-      if (s.enabled === false) {
-        chips = chips.filter((n) => n.toLowerCase() !== key);
-      }
-    }
-    setCustomSources(next);
-    customSourcesRef.current = next;
-    localStorage.setItem(LS_CUSTOM, JSON.stringify(next));
-    selectedSourcesRef.current = chips;
-    setSelectedSources(chips);
-    const u = userRef.current;
-    if (u && isSupabaseConfigured()) {
-      const supabase = getSupabaseBrowser()!;
-      void (async () => {
-        await ensureProfile(u);
-        await supabase.from("custom_sources").delete().eq("user_id", u.id);
-        if (next.length > 0) {
-          await supabase.from("custom_sources").insert(
-            next.map((s) => ({ user_id: u.id, name: s.name, type: s.type, url: s.url, enabled: s.enabled !== false }))
-          );
-        }
-      })();
-    }
-    void fetchJobs({ q, location, remoteOnly, customs: next });
   }
 
   function toggleSave(job: UnifiedJob) {
@@ -482,7 +384,6 @@ export default function Home() {
   const remaining = Math.max(filtered.length - displayed.length, 0);
 
   const savedCount = savedHashes.size;
-  const enabledCustomCount = customSources.filter((s) => s.enabled !== false).length;
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-black">
@@ -514,10 +415,6 @@ export default function Home() {
         onSearch={() => fetchJobs()}
         onPersonalized={() => fetchJobs(undefined, true)}
         hasResume={resumeText.length > 50}
-        availableSources={availableSources}
-        selectedSources={selectedSources}
-        onToggleSource={toggleSource}
-        onClearSources={clearSources}
       />
 
       <main className="mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-6">
@@ -529,7 +426,6 @@ export default function Home() {
               [
                 { id: "jobs", label: `Jobs (${filtered.length})` },
                 { id: "resume", label: resumeText.length > 50 ? "Resume ✓" : "Resume !" },
-                { id: "sources", label: `Sources (${enabledCustomCount})` },
               ] as const
             ).map((t) => (
               <button
@@ -555,17 +451,6 @@ export default function Home() {
                 <p className="mt-1 text-xs text-zinc-500">ATS scoring uses this text. Stored locally unless Supabase configured.</p>
                 <div className="mt-3">
                   <ResumeUploader onText={setResumeText} initialText={resumeText} />
-                </div>
-              </SidePanel>
-            </div>
-
-            <div className={`${mobileTab === "sources" ? "" : "hidden"} lg:block`}>
-              <SidePanel title="2. My job sources" defaultOpen>
-                <p className="mt-1 text-xs text-zinc-500">
-                  Add RSS feeds or Greenhouse/Lever boards. Searches include them automatically.
-                </p>
-                <div className="mt-3">
-                  <CustomSources sources={customSources} onChange={handleCustomSourcesChange} isCloud={!!user} />
                 </div>
               </SidePanel>
             </div>
@@ -701,7 +586,7 @@ export default function Home() {
       </main>
 
       <footer className="border-t border-zinc-100 bg-white py-6 text-center text-xs text-zinc-500 dark:border-zinc-900 dark:bg-zinc-950">
-        Built with Next.js 16 • Deploy to Vercel/Netlify free • Arbeitnow + Remotive free APIs • Gemini ATS • <a href="/PLAN.md" className="underline">Plan</a>
+        Built with Next.js 16 • Deploy to Vercel/Netlify free • LinkedIn India + RemoteOK free APIs • Gemini ATS • <a href="/PLAN.md" className="underline">Plan</a>
       </footer>
 
       {toast && (

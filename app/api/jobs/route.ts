@@ -59,7 +59,7 @@ export async function GET(req: NextRequest) {
   const q = norm(searchParams.get("q"));
   const location = norm(searchParams.get("location"));
   const remoteOnly = searchParams.get("remote") === "true";
-  // ?sources=Adzuna,RemoteOK or ?sources=Adzuna&sources=RemoteOK
+  // ?sources=LinkedIn India,RemoteOK or ?sources=JSearch&sources=RemoteOK
   const rawSources = [
     ...searchParams.getAll("sources"),
     ...(searchParams.get("source") ? [searchParams.get("source")!] : []),

@@ -10,10 +10,6 @@ export default function FilterBar({
   onSearch,
   onPersonalized,
   hasResume,
-  availableSources,
-  selectedSources,
-  onToggleSource,
-  onClearSources,
 }: {
   q: string;
   setQ: (v: string) => void;
@@ -24,12 +20,11 @@ export default function FilterBar({
   onSearch: () => void;
   onPersonalized: () => void;
   hasResume: boolean;
-  availableSources: string[];
-  selectedSources: string[];
-  onToggleSource: (s: string) => void;
-  onClearSources: () => void;
+  availableSources?: string[];
+  selectedSources?: string[];
+  onToggleSource?: (s: string) => void;
+  onClearSources?: () => void;
 }) {
-  const KEY_SOURCES = new Set(["Adzuna", "JSearch"]);
   const inputCls =
     "min-w-0 rounded-full border border-zinc-200 px-4 py-2 text-sm outline-none focus:border-black dark:border-zinc-800 dark:bg-black dark:focus:border-white";
   return (
@@ -70,41 +65,6 @@ export default function FilterBar({
           Remote only
         </label>
       </div>
-      {availableSources.length > 0 && (
-        <div className="mx-auto mt-2 flex max-w-6xl flex-nowrap items-center gap-1.5 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] sm:flex-wrap sm:overflow-visible sm:pb-0 [&::-webkit-scrollbar]:hidden">
-          <span className="shrink-0 text-xs text-zinc-500">Sources:</span>
-          {availableSources.map((s) => {
-            // Explicit toggle: a chip is on only if selected. Deselecting the
-            // last one leaves an empty selection (empty feed), never "all".
-            const active = selectedSources.includes(s);
-            return (
-              <button
-                key={s}
-                onClick={() => onToggleSource(s)}
-                title={
-                  KEY_SOURCES.has(s)
-                    ? `${s} needs API key (${s === "Adzuna" ? "ADZUNA_APP_ID/KEY" : "RAPIDAPI_KEY"}), otherwise returns 0`
-                    : `${s} is free, no key needed`
-                }
-                className={`shrink-0 whitespace-nowrap rounded-full border px-2.5 py-1.5 text-xs font-medium transition sm:py-1 ${
-                  active
-                    ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                    : "border-zinc-200 text-zinc-500 hover:border-zinc-400 dark:border-zinc-800"
-                }`}
-              >
-                {s}
-                {KEY_SOURCES.has(s) ? "*" : ""}
-              </button>
-            );
-          })}
-          {selectedSources.length !== availableSources.length && (
-            <button onClick={onClearSources} title="Select all sources" className="shrink-0 whitespace-nowrap text-xs text-zinc-500 underline">
-              All
-            </button>
-          )}
-          <span className="hidden shrink-0 text-[11px] text-zinc-400 sm:inline">*needs key • tap a chip to toggle it</span>
-        </div>
-      )}
     </div>
   );
 }

@@ -34,7 +34,7 @@ export const CUSTOM_SOURCE_TYPES: Array<{ value: CustomSourceType; label: string
 ];
 
 /** Built-in provider names — custom sources may not reuse these. */
-export const BUILTIN_SOURCE_NAMES = ["Arbeitnow", "Remotive", "Adzuna", "RemoteOK", "JSearch"];
+export const BUILTIN_SOURCE_NAMES = ["LinkedIn India", "Arbeitnow", "Remotive", "RemoteOK", "JSearch", "Active Jobs"];
 
 export function buildPresetUrl(type: CustomSourceType, tokenOrUrl: string): string {
   const t = tokenOrUrl.trim();
