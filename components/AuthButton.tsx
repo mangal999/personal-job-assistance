@@ -15,16 +15,6 @@ export function emitAuth(user: User | null) {
 function friendlyAuthError(e: unknown): string {
   const raw = e instanceof Error ? e.message : String(e);
   const lower = raw.toLowerCase();
-  if (lower.includes("provider is not enabled") || lower.includes("unsupported provider")) {
-    return (
-      "Google login is not enabled on this Supabase project yet. " +
-      "Fix: Supabase dashboard → Authentication → Providers → Google → paste your Google " +
-      "Client ID + Client Secret (Google Cloud Console → APIs & Services → Credentials → " +
-      "OAuth client ID → Web app), then Save. The toggle alone is NOT enough. " +
-      "Also confirm the app uses keys from the SAME project: Supabase Settings → API → " +
-      "Project URL must match your NEXT_PUBLIC_SUPABASE_URL."
-    );
-  }
   if (
     lower.includes("redirect") ||
     lower.includes("unauthorized_client") ||
@@ -77,19 +67,32 @@ export default function AuthButton() {
   const [configured] = useState(() => isSupabaseConfigured());
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState("");
-  const [otpSent, setOtpSent] = useState(false);
-  const [otp, setOtp] = useState("");
+  const [linkSent, setLinkSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+
+  // Ensure a profiles row exists right after login. Upserting only id+email
+  // never clobbers resume_text (PostgREST only touches provided columns).
+  // Without this, saved_jobs/custom_sources inserts fail on the FK to profiles(id).
+  async function ensureProfile(
+    supabase: NonNullable<ReturnType<typeof getSupabaseBrowser>>,
+    u: User
+  ) {
+    await supabase
+      .from("profiles")
+      .upsert({ id: u.id, email: u.email }, { onConflict: "id" });
+  }
 
   useEffect(() => {
     if (!configured) return;
     const supabase = getSupabaseBrowser();
     if (!supabase) return;
     supabase.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user ?? null);
-      emitAuth(data.session?.user ?? null);
+      const u = data.session?.user ?? null;
+      setUser(u);
+      emitAuth(u);
+      if (u) void ensureProfile(supabase, u);
     });
     // Pick up email magic-link callbacks (?token_hash=... or #access_token=...)
     // landing on this page. supabase-js won't verify ?token_hash links on its own.
@@ -98,8 +101,10 @@ export default function AuthButton() {
       setOpen(true);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_evt, session) => {
-      setUser(session?.user ?? null);
-      emitAuth(session?.user ?? null);
+      const u = session?.user ?? null;
+      setUser(u);
+      emitAuth(u);
+      if (u) void ensureProfile(supabase, u);
     });
     return () => sub.subscription.unsubscribe();
   }, [configured]);
@@ -116,24 +121,16 @@ export default function AuthButton() {
     );
   }
 
-  async function google() {
-    setBusy(true);
-    setMsg(null);
-    try {
-      const supabase = getSupabaseBrowser()!;
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo: `${window.location.origin}/login` },
-      });
-      if (error) throw error;
-    } catch (e) {
-      setMsg(friendlyAuthError(e));
-    } finally {
-      setBusy(false);
-    }
+  // Base URL for auth redirects. Prefers the deployed URL so magic links
+  // clicked from email land on production, not localhost.
+  // Set NEXT_PUBLIC_APP_URL=https://YOUR-APP.vercel.app in Vercel.
+  function getRedirectBase() {
+    const envUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+    if (envUrl) return envUrl.replace(/\/$/, "");
+    return window.location.origin;
   }
 
-  async function sendOtp() {
+  async function sendMagicLink() {
     setBusy(true);
     setMsg(null);
     try {
@@ -142,32 +139,13 @@ export default function AuthButton() {
         email: email.trim(),
         // Without this, Supabase falls back to the dashboard Site URL
         // (often localhost:3000) for the magic link. /login handles the
-        // callback (code verify + link exchange) — keep it allow-listed in
+        // callback (link exchange) — keep it allow-listed in
         // Supabase → Authentication → URL Configuration → Redirect URLs.
-        options: { emailRedirectTo: `${window.location.origin}/login` },
+        options: { emailRedirectTo: `${getRedirectBase()}/login` },
       });
       if (error) throw error;
-      setOtpSent(true);
-      setMsg("Check your email — enter the 6-digit code, or just click the login link (it brings you back here).");
-    } catch (e) {
-      setMsg(friendlyAuthError(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function verifyOtp() {
-    setBusy(true);
-    setMsg(null);
-    try {
-      const supabase = getSupabaseBrowser()!;
-      const { error } = await supabase.auth.verifyOtp({
-        email: email.trim(),
-        token: otp.trim(),
-        type: "email",
-      });
-      if (error) throw error;
-      setOpen(false);
+      setLinkSent(true);
+      setMsg("Check your email — click the login link to sign in.");
     } catch (e) {
       setMsg(friendlyAuthError(e));
     } finally {
@@ -208,47 +186,21 @@ export default function AuthButton() {
       </button>
       {open && (
         <div className="absolute right-0 z-20 mt-2 w-72 rounded-xl border border-zinc-200 bg-white p-3 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
-          <button
-            onClick={google}
-            disabled={busy}
-            className="w-full rounded-full bg-black px-3 py-2 text-xs font-medium text-white disabled:opacity-50 dark:bg-white dark:text-black"
-          >
-            Continue with Google
-          </button>
-          <div className="my-2 text-center text-[11px] text-zinc-400">or email code</div>
+          <p className="text-xs font-medium">Sign in with email magic link</p>
           <input
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@email.com"
             type="email"
-            className="w-full rounded-lg border border-zinc-200 px-3 py-1.5 text-xs dark:border-zinc-700 dark:bg-black"
+            className="mt-2 w-full rounded-lg border border-zinc-200 px-3 py-1.5 text-xs dark:border-zinc-700 dark:bg-black"
           />
-          {!otpSent ? (
-            <button
-              onClick={sendOtp}
-              disabled={busy || !email.includes("@")}
-              className="mt-2 w-full rounded-full border border-zinc-200 px-3 py-1.5 text-xs disabled:opacity-50 dark:border-zinc-700"
-            >
-              Send code
-            </button>
-          ) : (
-            <>
-              <input
-                value={otp}
-                onChange={(e) => setOtp(e.target.value)}
-                placeholder="6-digit code"
-                inputMode="numeric"
-                className="mt-2 w-full rounded-lg border border-zinc-200 px-3 py-1.5 text-xs dark:border-zinc-700 dark:bg-black"
-              />
-              <button
-                onClick={verifyOtp}
-                disabled={busy || otp.trim().length < 6}
-                className="mt-2 w-full rounded-full bg-black px-3 py-1.5 text-xs text-white disabled:opacity-50 dark:bg-white dark:text-black"
-              >
-                Verify & login
-              </button>
-            </>
-          )}
+          <button
+            onClick={sendMagicLink}
+            disabled={busy || !email.includes("@")}
+            className="mt-2 w-full rounded-full border border-zinc-200 px-3 py-1.5 text-xs disabled:opacity-50 dark:border-zinc-700"
+          >
+            {linkSent ? "Resend magic link" : "Send magic link"}
+          </button>
           {msg && <p className="mt-2 text-[11px] text-zinc-500">{msg}</p>}
         </div>
       )}

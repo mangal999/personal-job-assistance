@@ -139,6 +139,12 @@ export default function Home() {
       setUser(u);
       if (u && isSupabaseConfigured()) {
         const supabase = getSupabaseBrowser()!;
+        // Ensure profile row exists even before any resume is uploaded
+        // (saved_jobs etc. FK to profiles(id)). Only id+email — never
+        // overwrites resume_text.
+        await supabase
+          .from("profiles")
+          .upsert({ id: u.id, email: u.email }, { onConflict: "id" });
         // Load cloud-saved jobs
         const { data: saved } = await supabase.from("saved_jobs").select("job_data");
         if (saved && saved.length > 0) {
@@ -150,18 +156,24 @@ export default function Home() {
             );
           } catch {}
         }
-        // Load cloud resume if local empty
+        // Two-way resume sync: pull cloud resume when local is empty,
+        // push local resume when cloud is empty/missing.
         const { data: profile } = await supabase
           .from("profiles")
           .select("resume_text")
           .eq("id", u.id)
           .single();
         const cloudResume = (profile as { resume_text?: string } | null)?.resume_text;
+        const local = localStorage.getItem(LS_RESUME) || "";
         if (cloudResume && cloudResume.length > 50) {
-          const local = localStorage.getItem(LS_RESUME) || "";
           if (local.length < 50) {
             setResumeText(cloudResume);
           }
+        } else if (local.length >= 50) {
+          await supabase.from("profiles").upsert(
+            { id: u.id, email: u.email, resume_text: local, resume_updated_at: new Date().toISOString() },
+            { onConflict: "id" }
+          );
         }
         // Load cloud custom sources (cloud wins when non-empty)
         const { data: cloudSources } = await supabase
