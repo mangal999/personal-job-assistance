@@ -8,7 +8,8 @@ export default function LoginPage() {
     <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center px-4">
       <h1 className="text-xl font-bold">Login</h1>
       <p className="mt-1 text-center text-xs text-zinc-500">
-        Email magic link via Supabase (free). After login a profile row is created for you and you get
+        Email + password or magic link via Supabase (free). Password login sends no email, so it works
+        even when auth-email rate limits are hit. After login a profile row is created for you and you get
         cloud-saved jobs, resume sync and ATS history. Without Supabase keys the app still works with localStorage.
       </p>
       <div className="mt-4">
