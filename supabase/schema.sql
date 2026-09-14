@@ -78,3 +78,22 @@ do $$ begin
   create policy "Users manage own custom_sources" on custom_sources for all using (auth.uid() = user_id);
 exception when duplicate_object then null;
 end $$;
+
+-- Job-tailored resumes (P2 builder persistence)
+create table if not exists tailored_resumes (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references profiles(id) on delete cascade,
+  job_hash text not null,
+  job_snapshot jsonb not null,
+  resume_data jsonb not null,
+  resume_text text not null,
+  ats_score int,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now(),
+  unique(user_id, job_hash)
+);
+alter table tailored_resumes enable row level security;
+do $$ begin
+  create policy "Users manage own tailored_resumes" on tailored_resumes for all using (auth.uid() = user_id);
+exception when duplicate_object then null;
+end $$;

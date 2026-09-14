@@ -2,6 +2,7 @@
 
 import { UnifiedJob, ATSScore } from "@/lib/types";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 
 export default function JobCard({
   job,
@@ -21,6 +22,24 @@ export default function JobCard({
   const [mocked, setMocked] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const router = useRouter();
+
+  function handleBuildResume() {
+    try {
+      sessionStorage.setItem(
+        "pja_builder_job",
+        JSON.stringify({
+          title: job.title,
+          company: job.company,
+          location: job.location,
+          description: job.description,
+          apply_url: job.apply_url,
+          tags: job.tags ?? [],
+        })
+      );
+    } catch {}
+    router.push(`/builder?title=${encodeURIComponent(job.title)}&company=${encodeURIComponent(job.company)}`);
+  }
 
   async function handleATS() {
     if (!resumeText || resumeText.length < 50) {
@@ -123,6 +142,14 @@ export default function JobCard({
             className={`inline-flex items-center rounded-full px-3 py-2.5 text-xs font-medium text-white sm:py-2 ${score ? badgeColor : "bg-zinc-800 hover:bg-zinc-700"}`}
           >
             {score ? `ATS: ${score.overall_score}% ${score.verdict === "Strong Match" ? "✓" : score.verdict === "Moderate Match" ? "≈" : "✗"}` : "ATS Score"}
+          </button>
+
+          <button
+            onClick={handleBuildResume}
+            title="Build a tailored resume for this job"
+            className="inline-flex items-center rounded-full border border-zinc-300 px-3 py-2.5 text-xs font-medium hover:border-black sm:py-2 dark:border-zinc-700"
+          >
+            📄 Build Resume
           </button>
 
           <button

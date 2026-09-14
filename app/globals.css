@@ -37,3 +37,31 @@ button:not(:disabled),
 button:disabled {
   cursor: not-allowed;
 }
+
+/* Resume builder PDF export: print only the ATS preview.
+   NOTE: the date/title/URL/page-number strip is the browser's own
+   print header/footer — suppress it with @page margin 0 + padding on
+   the resume itself, and uncheck "Headers and footers" in the dialog. */
+@page {
+  size: A4;
+  margin: 0;
+}
+@media print {
+  .builder-no-print {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+  #resume-print {
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+    padding: 12mm 12mm 12mm 12mm !important;
+    color: #000 !important;
+  }
+}
