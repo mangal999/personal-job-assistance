@@ -16,8 +16,8 @@ export function resumeToPlainText(r: ResumeData): string {
   if (r.experience.length > 0) {
     lines.push("", "EXPERIENCE");
     for (const e of r.experience) {
-      const head = [e.title, e.company].filter(Boolean).join(" — ");
-      const dates = [e.start, e.end].filter(Boolean).join(" to ");
+      const head = [e.title, e.company, e.location].filter(Boolean).join(" | ");
+      const dates = [e.start, e.end].filter(Boolean).join(" - ");
       lines.push("", head + (dates ? ` (${dates})` : ""));
       for (const b of e.bullets) {
         if (b.trim()) lines.push(`- ${b.trim()}`);

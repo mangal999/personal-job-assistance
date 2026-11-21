@@ -155,6 +155,7 @@ export function sanitizeResumeData(input: unknown): ResumeData {
         id: typeof r.id === "string" ? (r.id as string).slice(0, 40) : newId(),
         title: str(r.title).slice(0, 200),
         company: str(r.company).slice(0, 200),
+        location: str(r.location).slice(0, 200),
         start: str(r.start).slice(0, 100),
         end: str(r.end).slice(0, 100),
         bullets,
@@ -192,7 +193,7 @@ You extract structured resume data. Return ONLY valid JSON, no markdown fences.
 Resume text:
 """${resume.slice(0, 10000)}"""
 Schema:
-{"contact":{"fullName":"","email":"","phone":"","location":"","linkedin":"","portfolio":""},"summary":"","skills":[],"experience":[{"id":"e1","title":"","company":"","start":"","end":"","bullets":[]}],"education":[{"id":"ed1","degree":"","school":"","year":""}],"projects":[{"id":"p1","name":"","link":"","bullets":[]}],"certifications":[]}
+{"contact":{"fullName":"","email":"","phone":"","location":"","linkedin":"","portfolio":""},"summary":"","skills":[],"experience":[{"id":"e1","title":"","company":"","location":"","start":"","end":"","bullets":[]}],"education":[{"id":"ed1","degree":"","school":"","year":""}],"projects":[{"id":"p1","name":"","link":"","bullets":[]}],"certifications":[]}
 Rules: extract only what is present; use "" or [] when missing. Never invent employers, dates, or skills. Max 15 experience bullets total, skills max 40.
 `.trim();
 
@@ -281,7 +282,7 @@ export function mockParseResume(resumeText: string): ResumeData {
   base.skills = dict.filter((s) => lower.includes(s.toLowerCase())).slice(0, 30);
   if (para) {
     base.experience = [
-      { id: "e1", title: "", company: "", start: "", end: "", bullets: [para.slice(0, 300)] },
+      { id: "e1", title: "", company: "", location: "", start: "", end: "", bullets: [para.slice(0, 300)] },
     ];
   }
   return base;

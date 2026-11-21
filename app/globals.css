@@ -64,4 +64,10 @@ button:disabled {
     padding: 12mm 12mm 12mm 12mm !important;
     color: #000 !important;
   }
+  /* ATS-safe page breaks: avoid breaking individual items across pages */
+  .resume-item,
+  .break-inside-avoid {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
 }

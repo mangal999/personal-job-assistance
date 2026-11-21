@@ -11,6 +11,7 @@ export interface ResumeExperience {
   id: string;
   title: string;
   company: string;
+  location?: string;
   start: string;
   end: string;
   bullets: string[];

@@ -73,7 +73,7 @@ export default function ResumeForm({
               set({
                 experience: [
                   ...resume.experience,
-                  { id: newId(), title: "", company: "", start: "", end: "", bullets: [""] },
+                  { id: newId(), title: "", company: "", location: "", start: "", end: "", bullets: [""] },
                 ],
               })
             }
@@ -86,18 +86,23 @@ export default function ResumeForm({
           {resume.experience.map((e, idx) => (
             <div key={e.id} className="rounded-lg bg-zinc-50 p-3 dark:bg-zinc-950">
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <input className={inputCls} placeholder="Title" value={e.title} onChange={(ev) => {
+                <input className={inputCls} placeholder="Title (e.g. Frontend Engineer)" value={e.title} onChange={(ev) => {
                   const arr = [...resume.experience]; arr[idx] = { ...e, title: ev.target.value }; set({ experience: arr });
                 }} />
-                <input className={inputCls} placeholder="Company" value={e.company} onChange={(ev) => {
+                <input className={inputCls} placeholder="Company (e.g. Acme Corp)" value={e.company} onChange={(ev) => {
                   const arr = [...resume.experience]; arr[idx] = { ...e, company: ev.target.value }; set({ experience: arr });
                 }} />
-                <input className={inputCls} placeholder="Start (e.g. Jan 2022)" value={e.start} onChange={(ev) => {
-                  const arr = [...resume.experience]; arr[idx] = { ...e, start: ev.target.value }; set({ experience: arr });
+                <input className={inputCls} placeholder="Location (e.g. New York, NY or Remote)" value={e.location ?? ""} onChange={(ev) => {
+                  const arr = [...resume.experience]; arr[idx] = { ...e, location: ev.target.value }; set({ experience: arr });
                 }} />
-                <input className={inputCls} placeholder="End (e.g. Present)" value={e.end} onChange={(ev) => {
-                  const arr = [...resume.experience]; arr[idx] = { ...e, end: ev.target.value }; set({ experience: arr });
-                }} />
+                <div className="grid grid-cols-2 gap-2">
+                  <input className={inputCls} placeholder="Start (e.g. Jan 2022)" value={e.start} onChange={(ev) => {
+                    const arr = [...resume.experience]; arr[idx] = { ...e, start: ev.target.value }; set({ experience: arr });
+                  }} />
+                  <input className={inputCls} placeholder="End (e.g. Present)" value={e.end} onChange={(ev) => {
+                    const arr = [...resume.experience]; arr[idx] = { ...e, end: ev.target.value }; set({ experience: arr });
+                  }} />
+                </div>
               </div>
               <label className="mt-2 block">
                 <span className={labelCls}>Bullets (one per line)</span>
